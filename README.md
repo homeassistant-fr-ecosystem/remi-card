@@ -121,6 +121,8 @@ type: custom:remi-card
 device_id: garance
 ```
 
+![remi-card](assets/sample.png) 
+
 ### Compact View (Controls Only)
 
 ```yaml
