@@ -27,10 +27,11 @@
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-typescript": "^11.1.6",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
+    "@typescript-eslint/parser": "^8.52.0",
     "eslint": "^8.57.0",
     "rollup": "^4.9.6",
     "@rollup/plugin-terser": "^0.4.4",
+    "rollup-plugin-copy": "^3.5.0",
     "rollup-plugin-serve": "^2.0.3",
     "tslib": "^2.6.2",
     "typescript": "^5.3.3"
