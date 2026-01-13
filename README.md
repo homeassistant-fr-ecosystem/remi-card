@@ -146,24 +146,46 @@ hours_to_show: 24
 
 ## Development
 
-### Build
+### Quick Start
 
 ```bash
 npm install
 npm run build
 ```
 
-### Watch Mode
+### Available Commands
 
 ```bash
-npm run watch
+npm run build      # Build for production
+npm run watch      # Build and watch for changes
+npm run lint       # Run ESLint
 ```
 
-### Lint
+For detailed development instructions, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```bash
-npm run lint
-```
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on:
+
+- Setting up your development environment
+- Code standards and best practices
+- Submitting pull requests
+- Adding or improving translations
+- Reporting bugs and requesting features
+
+### Translation Contributions
+
+Help make Rémi Card available in more languages! for:
+
+- Currently supported languages (EN, FR)
+- How to add a new language
+- Translation quality guidelines
+- Testing your translations
+
+## Documentation
+
+- **[README.md](README.md)** - This file, general usage and installation
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development and contribution guidelines
 
 ## License
 
