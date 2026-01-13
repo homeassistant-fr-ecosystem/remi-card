@@ -1,0 +1,34 @@
+{
+  "common": {
+    "remi": "Rémi",
+    "unknown": "Inconnu",
+    "off": "Éteint",
+    "on": "Allumé",
+    "turn_on": "Allumer",
+    "turn_off": "Éteindre"
+  },
+  "face": {
+    "sleepyFace": "Sommeil",
+    "semiAwakeFace": "Semi-éveil",
+    "awakeFace": "Éveil",
+    "smilyFace": "Sourire",
+    "blankFace": "Neutre"
+  },
+  "connectivity": {
+    "connected": "Connecté",
+    "disconnected": "Déconnecté"
+  },
+  "temperature": {
+    "title": "Température",
+    "click_for_history": "Cliquez pour voir l'historique"
+  },
+  "editor": {
+    "device_id": "ID de l'appareil (ex: garance)",
+    "device_name": "Nom de l'appareil (optionnel)",
+    "show_face_selector": "Afficher le sélecteur de visages",
+    "show_controls": "Afficher les contrôles de lumière",
+    "show_temperature_graph": "Afficher le graphique de température",
+    "show_connectivity": "Afficher la connectivité",
+    "hours_to_show": "Heures à afficher dans le graphique"
+  }
+}

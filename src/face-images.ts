@@ -1,6 +1,6 @@
 /**
  * Face images configuration for Rémi UrbanHello device
- * Maps face states to their corresponding images and display names
+ * Maps face states to their corresponding images
  */
 
 import sleepyFace from './face/face_sleepy.png';
@@ -10,20 +10,22 @@ import smilyFace from './face/face_smily.png';
 import blankFace from './face/face_blank.png';
 
 /**
- * French display names for each face state
+ * Available face states
  */
-export const FACE_NAMES: { [key: string]: string } = {
-  sleepyFace: 'Sommeil',
-  awakeFace: 'Éveil',
-  semiAwakeFace: 'Semi-éveil',
-  smilyFace: 'Sourire',
-  blankFace: 'Neutre',
-};
+export const FACE_STATES = [
+  'sleepyFace',
+  'awakeFace',
+  'semiAwakeFace',
+  'smilyFace',
+  'blankFace',
+] as const;
+
+export type FaceState = typeof FACE_STATES[number];
 
 /**
  * Mapping of face state names to their imported image assets
  */
-export const FACE_ICONS: { [key: string]: string } = {
+export const FACE_ICONS: Record<string, string> = {
   sleepyFace,
   awakeFace,
   semiAwakeFace,

@@ -6,7 +6,8 @@
 import { LitElement, html, css, PropertyValues, TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
-import { FACE_NAMES, getFaceIcon } from './face-images';
+import { getFaceIcon, FACE_STATES } from './face-images';
+import { localize, localizeFace, localizeCommon } from './localize';
 
 /**
  * Base interface for Home Assistant entity state
@@ -314,6 +315,14 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Get the user's language from Home Assistant
+   * @returns The language code (e.g., "en", "fr")
+   */
+  private _getLanguage(): string {
+    return this.hass?.locale?.language || this.hass?.language || 'en';
+  }
+
+  /**
    * Control the night light brightness
    * Turns the light on/off or adjusts brightness
    * @param brightness - Brightness percentage (0-100), 0 turns off the light
@@ -397,10 +406,11 @@ export class RemiCard extends LitElement {
     const faceState = this._getFaceState();
     const lightState = this._getLightState();
     const tempState = this._getTemperatureState();
+    const lang = this._getLanguage();
 
     const deviceName = this._config.device_name || this._config.device_id;
     const faceImage = faceState ? getFaceIcon(faceState) : getFaceIcon('blankFace');
-    const faceName = faceState ? FACE_NAMES[faceState] || faceState : 'Inconnu';
+    const faceName = faceState ? localizeFace(faceState, lang) : localizeCommon('unknown', lang);
 
     let statusText = '';
     if (tempState && tempState.state !== 'unavailable') {
@@ -415,7 +425,7 @@ export class RemiCard extends LitElement {
         statusText += ` • ${percent}%`;
       }
     } else {
-      statusText += ' • Éteint';
+      statusText += ` • ${localizeCommon('off', lang)}`;
     }
 
     const isLightOn = lightState?.state === 'on';
@@ -426,7 +436,7 @@ export class RemiCard extends LitElement {
           <img src="${faceImage}" alt="${faceName}" class="face-icon" />
         </div>
         <div class="info">
-          <div class="title">Rémi ${deviceName}</div>
+          <div class="title">${localizeCommon('remi', lang)} ${deviceName}</div>
           <div class="status">${statusText}</div>
         </div>
       </div>
@@ -440,6 +450,7 @@ export class RemiCard extends LitElement {
   private _renderLightControls(): TemplateResult {
     const lightState = this._getLightState();
     const isOn = lightState?.state === 'on';
+    const lang = this._getLanguage();
     // Keep the brightness value even when light is off
     const currentBrightness = lightState?.attributes.brightness
       ? Math.round((lightState.attributes.brightness / 255) * 100)
@@ -451,7 +462,7 @@ export class RemiCard extends LitElement {
           <button
             class="light-toggle-btn ${isOn ? 'on' : 'off'}"
             @click=${() => this._handleLightControl(isOn ? 0 : currentBrightness)}
-            title="${isOn ? 'Éteindre' : 'Allumer'}"
+            title="${isOn ? localizeCommon('turn_off', lang) : localizeCommon('turn_on', lang)}"
           >
             <ha-icon icon="${isOn ? 'mdi:lightbulb' : 'mdi:lightbulb-outline'}"></ha-icon>
           </button>
@@ -482,13 +493,13 @@ export class RemiCard extends LitElement {
     if (!faceSelectEntity) return html``;
 
     const currentFace = faceSelectEntity.state;
-    const faceOptions = [
-      { value: 'sleepyFace', icon: getFaceIcon('sleepyFace'), label: 'Sommeil' },
-      { value: 'semiAwakeFace', icon: getFaceIcon('semiAwakeFace'), label: 'Semi-éveil' },
-      { value: 'awakeFace', icon: getFaceIcon('awakeFace'), label: 'Éveil' },
-      { value: 'smilyFace', icon: getFaceIcon('smilyFace'), label: 'Sourire' },
-      { value: 'blankFace', icon: getFaceIcon('blankFace'), label: 'Neutre' },
-    ];
+    const lang = this._getLanguage();
+
+    const faceOptions = FACE_STATES.map((face) => ({
+      value: face,
+      icon: getFaceIcon(face),
+      label: localizeFace(face, lang),
+    }));
 
     return html`
       <div class="section">
@@ -519,12 +530,15 @@ export class RemiCard extends LitElement {
     const tempEntity = this._entities.temperature;
     if (!tempEntity) return html``;
 
+    const lang = this._getLanguage();
+    const tempState = this._getState(tempEntity);
+
     return html`
       <div class="section">
-        <div class="section-title">📊 Température (${this._config.hours_to_show}h)</div>
+        <div class="section-title">📊 ${localize('temperature.title', lang)} (${this._config.hours_to_show}h)</div>
         <div class="graph-placeholder" @click=${() => this._handleMoreInfo(tempEntity)}>
-          <div class="entity-state">${this._getState(tempEntity)?.state}°C</div>
-          <div class="entity-info">Cliquez pour voir l'historique</div>
+          <div class="entity-state">${tempState?.state}°C</div>
+          <div class="entity-info">${localize('temperature.click_for_history', lang)}</div>
         </div>
       </div>
     `;
@@ -544,13 +558,14 @@ export class RemiCard extends LitElement {
     }
 
     const isConnected = connectivityState.state === 'on';
+    const lang = this._getLanguage();
 
     return html`
       <div class="section">
         <div class="connectivity">
           <div class="connectivity-item ${isConnected ? 'connected' : 'disconnected'}">
             <ha-icon icon="mdi:wifi"></ha-icon>
-            <span>${isConnected ? 'Connecté' : 'Déconnecté'}</span>
+            <span>${localize(`connectivity.${isConnected ? 'connected' : 'disconnected'}`, lang)}</span>
           </div>
           ${rssiState && rssiState.state !== 'unavailable'
             ? html`

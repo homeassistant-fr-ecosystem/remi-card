@@ -1,0 +1,34 @@
+{
+  "common": {
+    "remi": "Rémi",
+    "unknown": "Unknown",
+    "off": "Off",
+    "on": "On",
+    "turn_on": "Turn on",
+    "turn_off": "Turn off"
+  },
+  "face": {
+    "sleepyFace": "Sleep",
+    "semiAwakeFace": "Semi-awake",
+    "awakeFace": "Awake",
+    "smilyFace": "Smile",
+    "blankFace": "Neutral"
+  },
+  "connectivity": {
+    "connected": "Connected",
+    "disconnected": "Disconnected"
+  },
+  "temperature": {
+    "title": "Temperature",
+    "click_for_history": "Click to view history"
+  },
+  "editor": {
+    "device_id": "Device ID (e.g., garance)",
+    "device_name": "Device Name (optional)",
+    "show_face_selector": "Show face selector",
+    "show_controls": "Show light controls",
+    "show_temperature_graph": "Show temperature graph",
+    "show_connectivity": "Show connectivity",
+    "hours_to_show": "Hours to show in graph"
+  }
+}

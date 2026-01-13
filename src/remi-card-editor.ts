@@ -6,6 +6,7 @@
 import { LitElement, html, css, TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant } from 'custom-card-helpers';
+import { localize } from './localize';
 
 /**
  * Configuration interface for the Rémi Card
@@ -36,6 +37,14 @@ export class RemiCardEditor extends LitElement {
    */
   public setConfig(config: RemiCardConfig): void {
     this._config = config;
+  }
+
+  /**
+   * Get the user's language from Home Assistant
+   * @returns The language code (e.g., "en", "fr")
+   */
+  private _getLanguage(): string {
+    return this.hass?.locale?.language || this.hass?.language || 'en';
   }
 
   /**
@@ -78,11 +87,13 @@ export class RemiCardEditor extends LitElement {
       return html``;
     }
 
+    const lang = this._getLanguage();
+
     return html`
       <div class="card-config">
         <div class="option">
           <ha-textfield
-            label="Device ID (e.g., garance)"
+            label="${localize('editor.device_id', lang)}"
             .value=${this._config.device_id || ''}
             .configValue=${'device_id'}
             @input=${this._valueChanged}
@@ -91,7 +102,7 @@ export class RemiCardEditor extends LitElement {
 
         <div class="option">
           <ha-textfield
-            label="Device Name (optional)"
+            label="${localize('editor.device_name', lang)}"
             .value=${this._config.device_name || ''}
             .configValue=${'device_name'}
             @input=${this._valueChanged}
@@ -99,7 +110,7 @@ export class RemiCardEditor extends LitElement {
         </div>
 
         <div class="option">
-          <ha-formfield label="Show face selector">
+          <ha-formfield label="${localize('editor.show_face_selector', lang)}">
             <ha-switch
               .checked=${this._config.show_face_selector !== false}
               .configValue=${'show_face_selector'}
@@ -109,7 +120,7 @@ export class RemiCardEditor extends LitElement {
         </div>
 
         <div class="option">
-          <ha-formfield label="Show light controls">
+          <ha-formfield label="${localize('editor.show_controls', lang)}">
             <ha-switch
               .checked=${this._config.show_controls !== false}
               .configValue=${'show_controls'}
@@ -119,7 +130,7 @@ export class RemiCardEditor extends LitElement {
         </div>
 
         <div class="option">
-          <ha-formfield label="Show temperature graph">
+          <ha-formfield label="${localize('editor.show_temperature_graph', lang)}">
             <ha-switch
               .checked=${this._config.show_temperature_graph !== false}
               .configValue=${'show_temperature_graph'}
@@ -129,7 +140,7 @@ export class RemiCardEditor extends LitElement {
         </div>
 
         <div class="option">
-          <ha-formfield label="Show connectivity">
+          <ha-formfield label="${localize('editor.show_connectivity', lang)}">
             <ha-switch
               .checked=${this._config.show_connectivity !== false}
               .configValue=${'show_connectivity'}
@@ -140,7 +151,7 @@ export class RemiCardEditor extends LitElement {
 
         <div class="option">
           <ha-textfield
-            label="Hours to show in graph"
+            label="${localize('editor.hours_to_show', lang)}"
             type="number"
             .value=${this._config.hours_to_show || 24}
             .configValue=${'hours_to_show'}
