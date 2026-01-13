@@ -48,7 +48,10 @@ export class RemiCardEditor extends LitElement {
       return;
     }
 
-    const target = ev.target as any;
+    const target = ev.target as HTMLInputElement & {
+      configValue?: string;
+      checked?: boolean;
+    };
     const value = target.value;
 
     if (target.configValue) {

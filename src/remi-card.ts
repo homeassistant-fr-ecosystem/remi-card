@@ -9,6 +9,68 @@ import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
 import { FACE_NAMES, getFaceIcon } from './face-images';
 
 /**
+ * Base interface for Home Assistant entity state
+ */
+interface HassEntity {
+  entity_id: string;
+  state: string;
+  attributes: Record<string, unknown>;
+  last_changed: string;
+  last_updated: string;
+  context: {
+    id: string;
+    parent_id: string | null;
+    user_id: string | null;
+  };
+}
+
+/**
+ * Light entity state with brightness attribute
+ */
+interface LightEntity extends HassEntity {
+  attributes: {
+    brightness?: number;
+    friendly_name?: string;
+    supported_features?: number;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Sensor entity state
+ */
+interface SensorEntity extends HassEntity {
+  attributes: {
+    unit_of_measurement?: string;
+    device_class?: string;
+    friendly_name?: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Binary sensor entity state
+ */
+interface BinarySensorEntity extends HassEntity {
+  attributes: {
+    device_class?: string;
+    friendly_name?: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Select entity state
+ */
+interface SelectEntity extends HassEntity {
+  attributes: {
+    options?: string[];
+    friendly_name?: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
  * Configuration interface for the Rémi Card
  */
 interface RemiCardConfig {
@@ -33,6 +95,30 @@ interface RemiEntity {
   temperature: string | null;
   connectivity: string | null;
   rssi: string | null;
+}
+
+/**
+ * Custom event detail for hass-more-info
+ */
+interface HassMoreInfoDetail {
+  entityId: string;
+}
+
+/**
+ * Window interface extension for custom cards
+ */
+interface CustomCardEntry {
+  type: string;
+  name: string;
+  description: string;
+  preview: boolean;
+  documentationURL: string;
+}
+
+declare global {
+  interface Window {
+    customCards?: CustomCardEntry[];
+  }
 }
 
 /**
@@ -170,11 +256,11 @@ export class RemiCard extends LitElement {
   /**
    * Get the state object for an entity
    * @param entityId - The entity ID to retrieve
-   * @returns The entity state object or null if not found
+   * @returns The entity state object or undefined if not found
    */
-  private _getState(entityId: string | null): any {
-    if (!entityId || !this.hass) return null;
-    return this.hass.states[entityId];
+  private _getState(entityId: string | null): HassEntity | undefined {
+    if (!entityId || !this.hass) return undefined;
+    return this.hass.states[entityId] as HassEntity | undefined;
   }
 
   /**
@@ -182,25 +268,49 @@ export class RemiCard extends LitElement {
    * @returns The face state string or null if unavailable
    */
   private _getFaceState(): string | null {
-    const faceEntity = this._getState(this._entities.face);
+    const faceEntity = this._getState(this._entities.face) as SensorEntity | undefined;
     if (!faceEntity || faceEntity.state === 'unavailable') return null;
     return faceEntity.state;
   }
 
   /**
    * Get the night light state
-   * @returns The light entity state object
+   * @returns The light entity state object or undefined if not found
    */
-  private _getLightState(): any {
-    return this._getState(this._entities.light);
+  private _getLightState(): LightEntity | undefined {
+    return this._getState(this._entities.light) as LightEntity | undefined;
   }
 
   /**
    * Get the temperature sensor state
-   * @returns The temperature entity state object
+   * @returns The temperature entity state object or undefined if not found
    */
-  private _getTemperatureState(): any {
-    return this._getState(this._entities.temperature);
+  private _getTemperatureState(): SensorEntity | undefined {
+    return this._getState(this._entities.temperature) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the face selector state
+   * @returns The select entity state object or undefined if not found
+   */
+  private _getFaceSelectState(): SelectEntity | undefined {
+    return this._getState(this._entities.faceSelect) as SelectEntity | undefined;
+  }
+
+  /**
+   * Get the connectivity state
+   * @returns The binary sensor entity state object or undefined if not found
+   */
+  private _getConnectivityState(): BinarySensorEntity | undefined {
+    return this._getState(this._entities.connectivity) as BinarySensorEntity | undefined;
+  }
+
+  /**
+   * Get the RSSI sensor state
+   * @returns The sensor entity state object or undefined if not found
+   */
+  private _getRssiState(): SensorEntity | undefined {
+    return this._getState(this._entities.rssi) as SensorEntity | undefined;
   }
 
   /**
@@ -271,11 +381,11 @@ export class RemiCard extends LitElement {
   private _handleMoreInfo(entityId: string | null): void {
     if (!entityId) return;
 
-    const event = new Event('hass-more-info', {
+    const event = new CustomEvent<HassMoreInfoDetail>('hass-more-info', {
+      detail: { entityId },
       bubbles: true,
       composed: true,
     });
-    (event as any).detail = { entityId };
     this.dispatchEvent(event);
   }
 
@@ -368,7 +478,7 @@ export class RemiCard extends LitElement {
    * @returns Template result for the face selector section
    */
   private _renderFaceSelector(): TemplateResult {
-    const faceSelectEntity = this._getState(this._entities.faceSelect);
+    const faceSelectEntity = this._getFaceSelectState();
     if (!faceSelectEntity) return html``;
 
     const currentFace = faceSelectEntity.state;
@@ -426,8 +536,8 @@ export class RemiCard extends LitElement {
    * @returns Template result for the connectivity section
    */
   private _renderConnectivity(): TemplateResult {
-    const connectivityState = this._getState(this._entities.connectivity);
-    const rssiState = this._getState(this._entities.rssi);
+    const connectivityState = this._getConnectivityState();
+    const rssiState = this._getRssiState();
 
     if (!connectivityState || connectivityState.state === 'unavailable') {
       return html``;
@@ -813,8 +923,8 @@ declare global {
 }
 
 // Register card in Home Assistant
-(window as any).customCards = (window as any).customCards || [];
-(window as any).customCards.push({
+window.customCards = window.customCards || [];
+window.customCards.push({
   type: 'remi-card',
   name: 'Rémi Card',
   description: 'A card for displaying and controlling Rémi UrbanHello baby sleep trainer devices',
