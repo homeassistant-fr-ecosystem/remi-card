@@ -22,6 +22,10 @@
     "title": "Temperature",
     "click_for_history": "Click to view history"
   },
+  "alarm": {
+    "title": "Alarm Clocks",
+    "no_repeat": "One time"
+  },
   "editor": {
     "device_id": "Device ID (e.g., garance)",
     "device_name": "Device Name (optional)",
@@ -29,6 +33,7 @@
     "show_controls": "Show light controls",
     "show_temperature_graph": "Show temperature graph",
     "show_connectivity": "Show connectivity",
+    "show_alarm_clocks": "Show alarm clocks",
     "hours_to_show": "Hours to show in graph"
   }
 }
