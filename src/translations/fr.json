@@ -22,6 +22,10 @@
     "title": "Température",
     "click_for_history": "Cliquez pour voir l'historique"
   },
+  "alarm": {
+    "title": "Réveils",
+    "no_repeat": "Unique"
+  },
   "editor": {
     "device_id": "ID de l'appareil (ex: garance)",
     "device_name": "Nom de l'appareil (optionnel)",
@@ -29,6 +33,7 @@
     "show_controls": "Afficher les contrôles de lumière",
     "show_temperature_graph": "Afficher le graphique de température",
     "show_connectivity": "Afficher la connectivité",
+    "show_alarm_clocks": "Afficher les réveils",
     "hours_to_show": "Heures à afficher dans le graphique"
   }
 }
