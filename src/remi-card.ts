@@ -159,6 +159,7 @@ export class RemiCard extends LitElement {
     rssi: null,
     alarms: [],
   };
+  @state() private _alarmsExpanded = false;
 
   /**
    * Get a default stub configuration for the card
@@ -620,6 +621,30 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Toggle the alarms panel visibility
+   */
+  private _toggleAlarmsPanel(): void {
+    this._alarmsExpanded = !this._alarmsExpanded;
+  }
+
+  /**
+   * Toggle an alarm switch
+   * @param switchEntityId - The switch entity ID to toggle
+   * @param event - The click event
+   */
+  private _handleAlarmToggle(switchEntityId: string, event: Event): void {
+    event.stopPropagation(); // Prevent opening more-info dialog
+
+    const switchState = this._getState(switchEntityId);
+    if (!switchState) return;
+
+    const service = switchState.state === 'on' ? 'turn_off' : 'turn_on';
+    this.hass.callService('switch', service, {
+      entity_id: switchEntityId,
+    });
+  }
+
+  /**
    * Render the alarm clocks section
    * Shows all configured alarm clocks for this device
    * @returns Template result for the alarm clocks section
@@ -630,16 +655,31 @@ export class RemiCard extends LitElement {
     }
 
     const lang = this._getLanguage();
+    const alarmsCount = this._entities.alarms.length;
 
     return html`
       <div class="section">
-        <div class="section-title">⏰ ${localize('alarm.title', lang)}</div>
+        <div class="alarms-section-header" @click=${this._toggleAlarmsPanel}>
+          <div class="alarms-section-title">
+            <ha-icon icon="mdi:alarm-multiple"></ha-icon>
+            <span>⏰ ${localize('alarm.title', lang)} (${alarmsCount})</span>
+          </div>
+          <ha-icon icon=${this._alarmsExpanded ? 'mdi:chevron-up' : 'mdi:chevron-down'}></ha-icon>
+        </div>
+        ${this._alarmsExpanded ? html`
         <div class="alarms-container">
           ${this._entities.alarms.map((alarmId) => {
             const alarmState = this._getState(alarmId) as TimeEntity | undefined;
             if (!alarmState || alarmState.state === 'unavailable') {
               return html``;
             }
+
+            // Extract alarm name from entity ID
+            // time.garance_week_night_time -> garance_week_night -> switch.garance_week_night
+            const alarmEntityName = alarmId.replace('time.', '').replace('_time', '');
+            const switchEntityId = `switch.${alarmEntityName}`;
+            const switchState = this._getState(switchEntityId);
+            const isAlarmEnabled = switchState?.state === 'on';
 
             const alarmName = alarmState.attributes.name || 'Alarm';
             const alarmTime = alarmState.state;
@@ -656,10 +696,20 @@ export class RemiCard extends LitElement {
               : localize('alarm.no_repeat', lang);
 
             return html`
-              <div class="alarm-card" @click=${() => this._handleMoreInfo(alarmId)}>
+              <div class="alarm-card ${isAlarmEnabled ? 'enabled' : 'disabled'}" @click=${() => this._handleMoreInfo(alarmId)}>
                 <div class="alarm-header">
-                  <div class="alarm-time">${alarmTime}</div>
-                  <div class="alarm-name">${alarmName}</div>
+                  <div class="alarm-time-container">
+                    <div class="alarm-time">${alarmTime}</div>
+                    <div class="alarm-name">${alarmName}</div>
+                  </div>
+                  ${switchState
+                    ? html`
+                        <ha-switch
+                          .checked=${isAlarmEnabled}
+                          @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
+                        ></ha-switch>
+                      `
+                    : ''}
                 </div>
                 <div class="alarm-details">
                   ${days.length > 0
@@ -704,6 +754,7 @@ export class RemiCard extends LitElement {
             `;
           })}
         </div>
+        ` : ''}
       </div>
     `;
   }
@@ -1057,10 +1108,44 @@ export class RemiCard extends LitElement {
         --mdc-icon-size: 20px;
       }
 
+      .alarms-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        background: var(--secondary-background-color);
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+
+      .alarms-section-header:hover {
+        background: var(--divider-color);
+      }
+
+      .alarms-section-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: bold;
+        font-size: 1em;
+      }
+
+      .alarms-section-title ha-icon {
+        --mdc-icon-size: 20px;
+      }
+
+      .alarms-section-header > ha-icon {
+        --mdc-icon-size: 24px;
+        color: var(--secondary-text-color);
+      }
+
       .alarms-container {
         display: flex;
         flex-direction: column;
         gap: 12px;
+        margin-top: 8px;
       }
 
       .alarm-card {
@@ -1072,6 +1157,10 @@ export class RemiCard extends LitElement {
         transition: all 0.2s ease;
       }
 
+      .alarm-card.disabled {
+        opacity: 0.6;
+      }
+
       .alarm-card:hover {
         background: var(--secondary-background-color);
         transform: translateY(-2px);
@@ -1080,20 +1169,33 @@ export class RemiCard extends LitElement {
 
       .alarm-header {
         display: flex;
-        align-items: baseline;
+        align-items: center;
+        justify-content: space-between;
         gap: 12px;
         margin-bottom: 8px;
+      }
+
+      .alarm-time-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       .alarm-time {
         font-size: 1.8em;
         font-weight: bold;
         color: var(--primary-text-color);
+        line-height: 1;
       }
 
       .alarm-name {
         font-size: 1em;
         color: var(--secondary-text-color);
+      }
+
+      .alarm-card ha-switch {
+        flex-shrink: 0;
       }
 
       .alarm-details {
