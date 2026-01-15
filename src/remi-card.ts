@@ -72,6 +72,25 @@ interface SelectEntity extends HassEntity {
 }
 
 /**
+ * Time entity state for alarm clocks
+ */
+interface TimeEntity extends HassEntity {
+  attributes: {
+    name?: string;
+    alarm_id?: string;
+    brightness?: number;
+    volume?: number;
+    face?: string;
+    lightnight?: boolean;
+    days?: string[];
+    days_indices?: number[];
+    recurrence?: unknown[];
+    friendly_name?: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
  * Configuration interface for the Rémi Card
  */
 interface RemiCardConfig {
@@ -83,6 +102,7 @@ interface RemiCardConfig {
   show_face_selector?: boolean;
   show_temperature_graph?: boolean;
   show_connectivity?: boolean;
+  show_alarm_clocks?: boolean;
   hours_to_show?: number;
 }
 
@@ -96,6 +116,7 @@ interface RemiEntity {
   temperature: string | null;
   connectivity: string | null;
   rssi: string | null;
+  alarms: string[];
   luminosity: string | null;
   firmwareVersion: string | null;
   clockFormat: string | null;
@@ -152,6 +173,7 @@ export class RemiCard extends LitElement {
     temperature: null,
     connectivity: null,
     rssi: null,
+    alarms: [],
     luminosity: null,
     firmwareVersion: null,
     clockFormat: null,
@@ -172,6 +194,7 @@ export class RemiCard extends LitElement {
       show_face_selector: true,
       show_temperature_graph: true,
       show_connectivity: true,
+      show_alarm_clocks: true,
       hours_to_show: 24,
     };
   }
@@ -202,6 +225,7 @@ export class RemiCard extends LitElement {
       show_face_selector: true,
       show_temperature_graph: true,
       show_connectivity: true,
+      show_alarm_clocks: true,
       hours_to_show: 24,
       ...config,
     };
@@ -281,9 +305,18 @@ export class RemiCard extends LitElement {
   private _updateEntities(): void {
     if (!this.hass || !this._config) return;
 
+    const deviceId = this._config.device_id;
+
+    // Find all alarm time entities for this device
+    const alarmEntities = Object.keys(this.hass.states)
+      .filter(entityId =>
+        entityId.startsWith(`time.remi_${deviceId}_`) &&
+        entityId.endsWith('_time')
+      );
+
     const base = this._config.device_name
       ? this._slugify(this._config.device_name)
-      : this._config.device_id;
+      : deviceId;
 
     // The face is exposed by the integration via a select entity, not a
     // dedicated sensor, so there is no ``sensor.*_face`` to read.
@@ -294,6 +327,7 @@ export class RemiCard extends LitElement {
       temperature: `sensor.${base}_temperature`,
       connectivity: `binary_sensor.${base}_connectivity`,
       rssi: `sensor.${base}_rssi`,
+      alarms: alarmEntities,
       luminosity: `sensor.${base}_luminosity`,
       firmwareVersion: `sensor.${base}_firmware_version`,
       clockFormat: `select.${base}_clock_format`,
@@ -768,6 +802,95 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Render the alarm clocks section
+   * Shows all configured alarm clocks for this device
+   * @returns Template result for the alarm clocks section
+   */
+  private _renderAlarmClocks(): TemplateResult {
+    if (!this._entities.alarms || this._entities.alarms.length === 0) {
+      return html``;
+    }
+
+    const lang = this._getLanguage();
+
+    return html`
+      <div class="section">
+        <div class="section-title">⏰ ${localize('alarm.title', lang)}</div>
+        <div class="alarms-container">
+          ${this._entities.alarms.map((alarmId) => {
+            const alarmState = this._getState(alarmId) as TimeEntity | undefined;
+            if (!alarmState || alarmState.state === 'unavailable') {
+              return html``;
+            }
+
+            const alarmName = alarmState.attributes.name || 'Alarm';
+            const alarmTime = alarmState.state;
+            const days = alarmState.attributes.days || [];
+            const face = alarmState.attributes.face;
+            const brightness = alarmState.attributes.brightness;
+            const volume = alarmState.attributes.volume;
+
+            // Format days for display
+            const daysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            const selectedDaysIndices = alarmState.attributes.days_indices || [];
+            const daysDisplay = selectedDaysIndices.length > 0
+              ? selectedDaysIndices.map(i => daysShort[i]).join(', ')
+              : localize('alarm.no_repeat', lang);
+
+            return html`
+              <div class="alarm-card" @click=${() => this._handleMoreInfo(alarmId)}>
+                <div class="alarm-header">
+                  <div class="alarm-time">${alarmTime}</div>
+                  <div class="alarm-name">${alarmName}</div>
+                </div>
+                <div class="alarm-details">
+                  ${days.length > 0
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:calendar-repeat"></ha-icon>
+                          <span>${daysDisplay}</span>
+                        </div>
+                      `
+                    : html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:calendar-blank"></ha-icon>
+                          <span>${daysDisplay}</span>
+                        </div>
+                      `}
+                  ${face
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:emoticon"></ha-icon>
+                          <span>${localizeFace(face, lang)}</span>
+                        </div>
+                      `
+                    : ''}
+                  ${brightness !== undefined
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:brightness-6"></ha-icon>
+                          <span>${brightness}%</span>
+                        </div>
+                      `
+                    : ''}
+                  ${volume !== undefined
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:volume-high"></ha-icon>
+                          <span>${volume}%</span>
+                        </div>
+                      `
+                    : ''}
+                </div>
+              </div>
+            `;
+          })}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
    * Render the complete card
    * Combines all sections based on configuration
    * @returns Template result for the entire card
@@ -782,6 +905,7 @@ export class RemiCard extends LitElement {
         ${this._renderHeader()}
         ${this._config.show_face_selector ? this._renderFaceSelector() : ''}
         ${this._config.show_controls ? this._renderLightControls() : ''}
+        ${this._config.show_alarm_clocks ? this._renderAlarmClocks() : ''}
         ${this._config.show_controls ? this._renderDeviceSettings() : ''}
         ${this._config.show_temperature_graph ? this._renderTemperatureGraph() : ''}
         ${this._config.show_connectivity ? this._renderConnectivity() : ''}
@@ -1150,6 +1274,70 @@ export class RemiCard extends LitElement {
 
       .connectivity-item ha-icon {
         --mdc-icon-size: 20px;
+      }
+
+      .alarms-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .alarm-card {
+        padding: 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        background: var(--card-background-color);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .alarm-card:hover {
+        background: var(--secondary-background-color);
+        transform: translateY(-2px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .alarm-header {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .alarm-time {
+        font-size: 1.8em;
+        font-weight: bold;
+        color: var(--primary-text-color);
+      }
+
+      .alarm-name {
+        font-size: 1em;
+        color: var(--secondary-text-color);
+      }
+
+      .alarm-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .alarm-detail-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        background: var(--secondary-background-color);
+        font-size: 0.85em;
+      }
+
+      .alarm-detail-item ha-icon {
+        --mdc-icon-size: 16px;
+        color: var(--primary-color);
+      }
+
+      .alarm-detail-item span {
+        color: var(--secondary-text-color);
       }
     `;
   }

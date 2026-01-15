@@ -20,6 +20,7 @@ interface RemiCardConfig {
   show_face_selector?: boolean;
   show_temperature_graph?: boolean;
   show_connectivity?: boolean;
+  show_alarm_clocks?: boolean;
   hours_to_show?: number;
 }
 
@@ -144,6 +145,16 @@ export class RemiCardEditor extends LitElement {
             <ha-switch
               .checked=${this._config.show_connectivity !== false}
               .configValue=${'show_connectivity'}
+              @change=${this._valueChanged}
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+
+        <div class="option">
+          <ha-formfield label="${localize('editor.show_alarm_clocks', lang)}">
+            <ha-switch
+              .checked=${this._config.show_alarm_clocks !== false}
+              .configValue=${'show_alarm_clocks'}
               @change=${this._valueChanged}
             ></ha-switch>
           </ha-formfield>
