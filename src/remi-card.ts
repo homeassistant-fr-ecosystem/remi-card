@@ -268,13 +268,19 @@ export class RemiCard extends LitElement {
     if (!this.hass || !this._config) return;
 
     const deviceId = this._config.device_id;
+    const deviceName = this._config.device_name || deviceId;
 
     // Find all alarm time entities for this device
     const alarmEntities = Object.keys(this.hass.states)
       .filter(entityId =>
-        entityId.startsWith(`time.remi_${deviceId}_`) &&
+        entityId.startsWith(`time.${deviceName.toLowerCase()}_`) &&
         entityId.endsWith('_time')
       );
+
+    // Debug logging
+    console.log('[Remi Card] Device ID:', deviceId);
+    console.log('[Remi Card] Device Name:', deviceName);
+    console.log('[Remi Card] Found alarm entities:', alarmEntities);
 
     this._entities = {
       face: `sensor.remi_${deviceId}_face`,
