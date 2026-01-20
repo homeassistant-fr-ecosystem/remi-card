@@ -265,22 +265,41 @@ export class RemiCard extends LitElement {
    * Update entity identifiers based on the device ID
    * Constructs entity IDs for all Rémi device sensors and controls
    */
-  private _updateEntities(): void {
+  private async _updateEntities(): Promise<void> {
     if (!this.hass || !this._config) return;
 
     const deviceId = this._config.device_id;
-    const deviceName = this._config.device_name || deviceId;
 
-    // Find all alarm time entities for this device
-    const alarmEntities = Object.keys(this.hass.states)
-      .filter(entityId =>
-        entityId.startsWith(`time.${deviceName.toLowerCase()}_`) &&
-        entityId.endsWith('_time')
-      );
+    // Get entities from the entity registry filtered by device_id
+    let alarmEntities: string[] = [];
+
+    try {
+      // Try to get entities from the entity registry via WebSocket
+      const entities = await this.hass.callWS<Array<{
+        entity_id: string;
+        device_id: string | null;
+      }>>({
+        type: 'config/entity_registry/list',
+      });
+
+      alarmEntities = entities
+        .filter(entity =>
+          entity.device_id === deviceId &&
+          entity.entity_id.startsWith('time.')
+        )
+        .map(entity => entity.entity_id);
+    } catch (error) {
+      console.warn('[Remi Card] Could not access entity registry, falling back to name-based filtering:', error);
+      // Fallback to name-based filtering if entity registry is not accessible
+      const deviceName = this._config.device_name || deviceId;
+      alarmEntities = Object.keys(this.hass.states)
+        .filter(entityId =>
+          entityId.startsWith(`time.${deviceName.toLowerCase()}_`)
+        );
+    }
 
     // Debug logging
     console.log('[Remi Card] Device ID:', deviceId);
-    console.log('[Remi Card] Device Name:', deviceName);
     console.log('[Remi Card] Found alarm entities:', alarmEntities);
 
     this._entities = {
@@ -685,8 +704,8 @@ export class RemiCard extends LitElement {
             }
 
             // Extract alarm name from entity ID
-            // time.garance_week_night_time -> garance_week_night -> switch.garance_week_night
-            const alarmEntityName = alarmId.replace('time.', '').replace('_time', '');
+            // time.garance_week_night -> garance_week_night -> switch.garance_week_night
+            const alarmEntityName = alarmId.replace('time.', '');
             const switchEntityId = `switch.${alarmEntityName}`;
             const switchState = this._getState(switchEntityId);
             const isAlarmEnabled = switchState?.state === 'on';
