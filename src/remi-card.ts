@@ -96,6 +96,7 @@ interface TimeEntity extends HassEntity {
 interface RemiCardConfig {
   type: string;
   device_id: string;
+  device_prefix: string;
   device_name?: string;
   title?: string;
   show_controls?: boolean;
@@ -170,6 +171,7 @@ export class RemiCard extends LitElement {
     return {
       type: 'custom:remi-card',
       device_id: 'garance',
+      device_prefix: 'garance',
       device_name: 'Garance',
       show_controls: true,
       show_face_selector: true,
@@ -269,6 +271,7 @@ export class RemiCard extends LitElement {
     if (!this.hass || !this._config) return;
 
     const deviceId = this._config.device_id;
+    const devicePrefix = this._config.device_prefix;
 
     // Get entities from the entity registry filtered by device_id
     let alarmEntities: string[] = [];
@@ -282,33 +285,46 @@ export class RemiCard extends LitElement {
         type: 'config/entity_registry/list',
       });
 
+      console.log('[Remi Card] Device ID:', deviceId);
+      console.log('[Remi Card] Device prefix:', devicePrefix);
+      console.log('[Remi Card] Device Name:', this._config.device_name);
+
+      // Debug: Show all time entities
+      const allTimeEntities = entities.filter(e => e.entity_id.startsWith('time.'));
+      console.log('[Remi Card] All time entities in registry:', allTimeEntities);
+
       alarmEntities = entities
         .filter(entity =>
           entity.device_id === deviceId &&
           entity.entity_id.startsWith('time.')
         )
         .map(entity => entity.entity_id);
+
+      console.log('[Remi Card] Filtered by device_id:', alarmEntities);
     } catch (error) {
       console.warn('[Remi Card] Could not access entity registry, falling back to name-based filtering:', error);
-      // Fallback to name-based filtering if entity registry is not accessible
-      const deviceName = this._config.device_name || deviceId;
+
+      // Debug: Show all time entities in states
+      const allTimeStates = Object.keys(this.hass.states).filter(e => e.startsWith('time.'));
+      console.log('[Remi Card] All time entities in states:', allTimeStates);
+      console.log('[Remi Card] Looking for pattern:', `time.${devicePrefix}_`);
+
       alarmEntities = Object.keys(this.hass.states)
         .filter(entityId =>
-          entityId.startsWith(`time.${deviceName.toLowerCase()}_`)
+          entityId.startsWith(`time.${devicePrefix}_`)
         );
     }
 
     // Debug logging
-    console.log('[Remi Card] Device ID:', deviceId);
     console.log('[Remi Card] Found alarm entities:', alarmEntities);
 
     this._entities = {
-      face: `sensor.remi_${deviceId}_face`,
-      faceSelect: `select.remi_${deviceId}_face`,
-      light: `light.remi_${deviceId}_night_light`,
-      temperature: `sensor.remi_${deviceId}_temperature`,
-      connectivity: `binary_sensor.remi_${deviceId}_connectivity`,
-      rssi: `sensor.remi_${deviceId}_rssi`,
+      face: `sensor.remi_${devicePrefix}_face`,
+      faceSelect: `select.remi_${devicePrefix}_face`,
+      light: `light.remi_${devicePrefix}_night_light`,
+      temperature: `sensor.remi_${devicePrefix}_temperature`,
+      connectivity: `binary_sensor.remi_${devicePrefix}_connectivity`,
+      rssi: `sensor.remi_${devicePrefix}_rssi`,
       alarms: alarmEntities,
     };
   }
