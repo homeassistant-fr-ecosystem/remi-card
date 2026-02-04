@@ -482,7 +482,7 @@ export class RemiCard extends LitElement {
     const alarmObjectId = alarmState?.attributes.alarm_id;
     if (!alarmObjectId) return;
 
-    this.hass.callService('urbanhello_remi_hass', 'trigger_alarm', {
+    this.hass.callService('urbanhello_remi', 'trigger_alarm', {
       device_id: this._config.device_id,
       alarm_id: alarmObjectId,
     });
@@ -500,7 +500,7 @@ export class RemiCard extends LitElement {
     const alarmObjectId = alarmState?.attributes.alarm_id;
     if (!alarmObjectId) return;
 
-    this.hass.callService('urbanhello_remi_hass', 'delete_alarm', {
+    this.hass.callService('urbanhello_remi', 'delete_alarm', {
       device_id: this._config.device_id,
       alarm_id: alarmObjectId,
     });
@@ -510,7 +510,7 @@ export class RemiCard extends LitElement {
    * Create a new alarm
    */
   private _handleAlarmCreate(): void {
-    this.hass.callService('urbanhello_remi_hass', 'create_alarm', {
+    this.hass.callService('urbanhello_remi', 'create_alarm', {
       device_id: this._config.device_id,
       time: '07:00',
       name: 'New Alarm',
@@ -1254,5 +1254,5 @@ window.customCards.push({
   name: 'Rémi Card',
   description: 'A card for displaying and controlling Rémi UrbanHello baby sleep trainer devices',
   preview: false,
-  documentationURL: 'https://github.com/yourusername/remi-card',
+  documentationURL: 'https://github.com/homeassistant-fr-ecosystem/remi-card',
 });
