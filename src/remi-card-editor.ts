@@ -14,6 +14,7 @@ import { localize } from './localize';
 interface RemiCardConfig {
   type: string;
   device_id: string;
+  device_prefix: string;
   device_name?: string;
   title?: string;
   show_controls?: boolean;
@@ -101,6 +102,14 @@ export class RemiCardEditor extends LitElement {
           ></ha-textfield>
         </div>
 
+        <div class="option">
+          <ha-textfield
+            label="${localize('editor.device_prefix', lang)}"
+            .value=${this._config.device_prefix || ''}
+            .configValue=${'device_prefix'}
+            @input=${this._valueChanged}
+          ></ha-textfield>
+        </div>
         <div class="option">
           <ha-textfield
             label="${localize('editor.device_name', lang)}"
