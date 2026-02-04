@@ -24,7 +24,11 @@
   },
   "alarm": {
     "title": "Alarm Clocks",
-    "no_repeat": "One time"
+    "no_repeat": "One time",
+    "add_alarm": "Add Alarm",
+    "delete_alarm": "Delete Alarm",
+    "trigger_alarm": "Test Alarm",
+    "confirm_delete": "Are you sure you want to delete this alarm?"
   },
   "editor": {
     "device_id": "Device ID (e.g., garance)",

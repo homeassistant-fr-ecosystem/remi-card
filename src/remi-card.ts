@@ -242,8 +242,11 @@ export class RemiCard extends LitElement {
       }
 
       // Check if any of our entities changed
-      const entities = Object.values(this._entities).filter((e) => e !== null);
-      return entities.some((entityId) => {
+      const entities = Object.values(this._entities).filter((e) => e !== null && !Array.isArray(e)) as string[];
+      const alarmEntities = this._entities.alarms;
+      const allEntities = [...entities, ...alarmEntities];
+
+      return allEntities.some((entityId) => {
         return oldHass.states[entityId] !== this.hass.states[entityId];
       });
     }
@@ -285,14 +288,6 @@ export class RemiCard extends LitElement {
         type: 'config/entity_registry/list',
       });
 
-      console.log('[Remi Card] Device ID:', deviceId);
-      console.log('[Remi Card] Device prefix:', devicePrefix);
-      console.log('[Remi Card] Device Name:', this._config.device_name);
-
-      // Debug: Show all time entities
-      const allTimeEntities = entities.filter(e => e.entity_id.startsWith('time.'));
-      console.log('[Remi Card] All time entities in registry:', allTimeEntities);
-
       alarmEntities = entities
         .filter(entity =>
           entity.device_id === deviceId &&
@@ -300,23 +295,14 @@ export class RemiCard extends LitElement {
         )
         .map(entity => entity.entity_id);
 
-      console.log('[Remi Card] Filtered by device_id:', alarmEntities);
     } catch (error) {
       console.warn('[Remi Card] Could not access entity registry, falling back to name-based filtering:', error);
-
-      // Debug: Show all time entities in states
-      const allTimeStates = Object.keys(this.hass.states).filter(e => e.startsWith('time.'));
-      console.log('[Remi Card] All time entities in states:', allTimeStates);
-      console.log('[Remi Card] Looking for pattern:', `time.${devicePrefix}_`);
 
       alarmEntities = Object.keys(this.hass.states)
         .filter(entityId =>
           entityId.startsWith(`time.${devicePrefix}_`)
         );
     }
-
-    // Debug logging
-    console.log('[Remi Card] Found alarm entities:', alarmEntities);
 
     this._entities = {
       face: `sensor.remi_${devicePrefix}_face`,
@@ -424,19 +410,9 @@ export class RemiCard extends LitElement {
   private _handleFaceSelect(face: string): void {
     if (!this._entities.faceSelect) return;
 
-    // HA select entity expects snake_case options, API uses camelCase
-    const FACE_API_TO_HA: Record<string, string> = {
-      sleepyFace: 'sleepy_face',
-      awakeFace: 'awake_face',
-      blankFace: 'blank_face',
-      semiAwakeFace: 'semi_awake_face',
-      smilyFace: 'smily_face',
-    };
-    const option = FACE_API_TO_HA[face] ?? face;
-
     this.hass.callService('select', 'select_option', {
       entity_id: this._entities.faceSelect,
-      option,
+      option: face,
     });
   }
 
@@ -446,8 +422,6 @@ export class RemiCard extends LitElement {
    * @param _e - The input event (unused)
    */
   private _handleSliderChange(_e: Event): void {
-    // Update UI immediately for smooth interaction
-    // Visual feedback only, don't call service yet
     this.requestUpdate();
   }
 
@@ -457,7 +431,6 @@ export class RemiCard extends LitElement {
    * @param e - The change event containing the final brightness value
    */
   private _handleSliderRelease(e: Event): void {
-    // Call service when slider is released
     const target = e.target as HTMLInputElement;
     const brightness = parseInt(target.value);
 
@@ -484,8 +457,77 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Render the card header with face icon and status information
-   * @returns Template result for the header section
+   * Toggle an alarm switch
+   * @param switchEntityId - The switch entity ID to toggle
+   * @param event - The click event
+   */
+  private _handleAlarmToggle(switchEntityId: string, event: Event): void {
+    event.stopPropagation();
+
+    const switchState = this._getState(switchEntityId);
+    if (!switchState) return;
+
+    const service = switchState.state === 'on' ? 'turn_off' : 'turn_on';
+    this.hass.callService('switch', service, {
+      entity_id: switchEntityId,
+    });
+  }
+
+  /**
+   * Trigger an alarm manually
+   */
+  private _handleAlarmTrigger(alarmId: string, event: Event): void {
+    event.stopPropagation();
+    const alarmState = this._getState(alarmId) as TimeEntity | undefined;
+    const alarmObjectId = alarmState?.attributes.alarm_id;
+    if (!alarmObjectId) return;
+
+    this.hass.callService('urbanhello_remi_hass', 'trigger_alarm', {
+      device_id: this._config.device_id,
+      alarm_id: alarmObjectId,
+    });
+  }
+
+  /**
+   * Delete an alarm
+   */
+  private _handleAlarmDelete(alarmId: string, event: Event): void {
+    event.stopPropagation();
+    const lang = this._getLanguage();
+    if (!confirm(localize('alarm.confirm_delete', lang))) return;
+
+    const alarmState = this._getState(alarmId) as TimeEntity | undefined;
+    const alarmObjectId = alarmState?.attributes.alarm_id;
+    if (!alarmObjectId) return;
+
+    this.hass.callService('urbanhello_remi_hass', 'delete_alarm', {
+      device_id: this._config.device_id,
+      alarm_id: alarmObjectId,
+    });
+  }
+
+  /**
+   * Create a new alarm
+   */
+  private _handleAlarmCreate(): void {
+    this.hass.callService('urbanhello_remi_hass', 'create_alarm', {
+      device_id: this._config.device_id,
+      time: '07:00',
+      name: 'New Alarm',
+      enabled: true,
+      days: [0, 1, 2, 3, 4],
+    });
+  }
+
+  /**
+   * Toggle the alarms panel visibility
+   */
+  private _toggleAlarmsPanel(): void {
+    this._alarmsExpanded = !this._alarmsExpanded;
+  }
+
+  /**
+   * Render the card header
    */
   private _renderHeader(): TemplateResult {
     const faceState = this._getFaceState();
@@ -529,17 +571,15 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Render the night light controls with brightness slider
-   * @returns Template result for the light control section
+   * Render the night light controls
    */
   private _renderLightControls(): TemplateResult {
     const lightState = this._getLightState();
     const isOn = lightState?.state === 'on';
     const lang = this._getLanguage();
-    // Keep the brightness value even when light is off
     const currentBrightness = lightState?.attributes.brightness
       ? Math.round((lightState.attributes.brightness / 255) * 100)
-      : 50; // Default to 50% if no brightness attribute exists
+      : 50;
 
     return html`
       <div class="section">
@@ -571,7 +611,6 @@ export class RemiCard extends LitElement {
 
   /**
    * Render the face selector buttons
-   * @returns Template result for the face selector section
    */
   private _renderFaceSelector(): TemplateResult {
     const faceSelectEntity = this._getFaceSelectState();
@@ -608,8 +647,6 @@ export class RemiCard extends LitElement {
 
   /**
    * Render the temperature graph placeholder
-   * Clicking opens the entity's history dialog
-   * @returns Template result for the temperature section
    */
   private _renderTemperatureGraph(): TemplateResult {
     const tempEntity = this._entities.temperature;
@@ -631,8 +668,6 @@ export class RemiCard extends LitElement {
 
   /**
    * Render the connectivity status section
-   * Shows WiFi connection status and signal strength
-   * @returns Template result for the connectivity section
    */
   private _renderConnectivity(): TemplateResult {
     const connectivityState = this._getConnectivityState();
@@ -666,36 +701,10 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Toggle the alarms panel visibility
-   */
-  private _toggleAlarmsPanel(): void {
-    this._alarmsExpanded = !this._alarmsExpanded;
-  }
-
-  /**
-   * Toggle an alarm switch
-   * @param switchEntityId - The switch entity ID to toggle
-   * @param event - The click event
-   */
-  private _handleAlarmToggle(switchEntityId: string, event: Event): void {
-    event.stopPropagation(); // Prevent opening more-info dialog
-
-    const switchState = this._getState(switchEntityId);
-    if (!switchState) return;
-
-    const service = switchState.state === 'on' ? 'turn_off' : 'turn_on';
-    this.hass.callService('switch', service, {
-      entity_id: switchEntityId,
-    });
-  }
-
-  /**
    * Render the alarm clocks section
-   * Shows all configured alarm clocks for this device
-   * @returns Template result for the alarm clocks section
    */
   private _renderAlarmClocks(): TemplateResult {
-    if (!this._entities.alarms || this._entities.alarms.length === 0) {
+    if (!this._entities.alarms) {
       return html``;
     }
 
@@ -709,7 +718,12 @@ export class RemiCard extends LitElement {
             <ha-icon icon="mdi:alarm-multiple"></ha-icon>
             <span>⏰ ${localize('alarm.title', lang)} (${alarmsCount})</span>
           </div>
-          <ha-icon icon=${this._alarmsExpanded ? 'mdi:chevron-up' : 'mdi:chevron-down'}></ha-icon>
+          <div class="alarms-section-actions">
+            <button class="icon-btn add-btn" @click=${(e: Event) => { e.stopPropagation(); this._handleAlarmCreate(); }} title="${localize('alarm.add_alarm', lang)}">
+              <ha-icon icon="mdi:plus"></ha-icon>
+            </button>
+            <ha-icon icon=${this._alarmsExpanded ? 'mdi:chevron-up' : 'mdi:chevron-down'}></ha-icon>
+          </div>
         </div>
         ${this._alarmsExpanded ? html`
         <div class="alarms-container">
@@ -719,8 +733,6 @@ export class RemiCard extends LitElement {
               return html``;
             }
 
-            // Extract alarm name from entity ID
-            // time.garance_week_night -> garance_week_night -> switch.garance_week_night
             const alarmEntityName = alarmId.replace('time.', '');
             const switchEntityId = `switch.${alarmEntityName}`;
             const switchState = this._getState(switchEntityId);
@@ -728,12 +740,10 @@ export class RemiCard extends LitElement {
 
             const alarmName = alarmState.attributes.name || 'Alarm';
             const alarmTime = alarmState.state;
-            const days = alarmState.attributes.days || [];
             const face = alarmState.attributes.face;
             const brightness = alarmState.attributes.brightness;
             const volume = alarmState.attributes.volume;
 
-            // Format days for display
             const daysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
             const selectedDaysIndices = alarmState.attributes.days_indices || [];
             const daysDisplay = selectedDaysIndices.length > 0
@@ -747,29 +757,28 @@ export class RemiCard extends LitElement {
                     <div class="alarm-time">${alarmTime}</div>
                     <div class="alarm-name">${alarmName}</div>
                   </div>
-                  ${switchState
-                    ? html`
-                        <ha-switch
-                          .checked=${isAlarmEnabled}
-                          @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
-                        ></ha-switch>
-                      `
-                    : ''}
+                  <div class="alarm-actions">
+                    <button class="icon-btn trigger-btn" @click=${(e: Event) => this._handleAlarmTrigger(alarmId, e)} title="${localize('alarm.trigger_alarm', lang)}">
+                      <ha-icon icon="mdi:play"></ha-icon>
+                    </button>
+                    <button class="icon-btn delete-btn" @click=${(e: Event) => this._handleAlarmDelete(alarmId, e)} title="${localize('alarm.delete_alarm', lang)}">
+                      <ha-icon icon="mdi:delete"></ha-icon>
+                    </button>
+                    ${switchState
+                      ? html`
+                          <ha-switch
+                            .checked=${isAlarmEnabled}
+                            @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
+                          ></ha-switch>
+                        `
+                      : ''}
+                  </div>
                 </div>
                 <div class="alarm-details">
-                  ${days.length > 0
-                    ? html`
-                        <div class="alarm-detail-item">
-                          <ha-icon icon="mdi:calendar-repeat"></ha-icon>
-                          <span>${daysDisplay}</span>
-                        </div>
-                      `
-                    : html`
-                        <div class="alarm-detail-item">
-                          <ha-icon icon="mdi:calendar-blank"></ha-icon>
-                          <span>${daysDisplay}</span>
-                        </div>
-                      `}
+                  <div class="alarm-detail-item">
+                    <ha-icon icon="mdi:calendar-repeat"></ha-icon>
+                    <span>${daysDisplay}</span>
+                  </div>
                   ${face
                     ? html`
                         <div class="alarm-detail-item">
@@ -806,8 +815,6 @@ export class RemiCard extends LitElement {
 
   /**
    * Render the complete card
-   * Combines all sections based on configuration
-   * @returns Template result for the entire card
    */
   protected render(): TemplateResult {
     if (!this._config || !this.hass) {
@@ -935,15 +942,6 @@ export class RemiCard extends LitElement {
         color: var(--secondary-text-color);
       }
 
-      .light-toggle-btn:hover {
-        transform: scale(1.1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-      }
-
-      .light-toggle-btn:active {
-        transform: scale(1.0);
-      }
-
       .light-toggle-btn ha-icon {
         --mdc-icon-size: 28px;
       }
@@ -1008,28 +1006,8 @@ export class RemiCard extends LitElement {
         transition: all 0.15s ease;
       }
 
-      .brightness-slider::-webkit-slider-thumb:hover {
-        transform: scale(1.2);
-        box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
-      }
-
-      .brightness-slider::-moz-range-thumb:hover {
-        transform: scale(1.2);
-        box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
-      }
-
       .brightness-slider.inactive {
         opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .brightness-slider.inactive::-webkit-slider-thumb {
-        background: var(--divider-color);
-        cursor: not-allowed;
-      }
-
-      .brightness-slider.inactive::-moz-range-thumb {
-        background: var(--divider-color);
         cursor: not-allowed;
       }
 
@@ -1059,16 +1037,6 @@ export class RemiCard extends LitElement {
         transition: all 0.2s ease;
       }
 
-      .face-btn:hover {
-        background: var(--secondary-background-color);
-        transform: translateY(-2px);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-      }
-
-      .face-btn:active {
-        transform: translateY(0);
-      }
-
       .face-btn.active {
         border-color: var(--primary-color);
         background: rgba(var(--rgb-primary-color), 0.1);
@@ -1087,21 +1055,6 @@ export class RemiCard extends LitElement {
         line-height: 1.2;
       }
 
-      @media (max-width: 600px) {
-        .face-selector {
-          grid-template-columns: repeat(3, 1fr);
-        }
-
-        .face-btn {
-          padding: 8px 4px;
-        }
-
-        .face-icon-small {
-          width: 30px;
-          height: 30px;
-        }
-      }
-
       .graph-placeholder {
         padding: 24px;
         border: 1px solid var(--divider-color);
@@ -1109,10 +1062,6 @@ export class RemiCard extends LitElement {
         text-align: center;
         cursor: pointer;
         transition: background 0.15s ease;
-      }
-
-      .graph-placeholder:hover {
-        background: var(--secondary-background-color);
       }
 
       .entity-state {
@@ -1165,10 +1114,6 @@ export class RemiCard extends LitElement {
         transition: background 0.2s ease;
       }
 
-      .alarms-section-header:hover {
-        background: var(--divider-color);
-      }
-
       .alarms-section-title {
         display: flex;
         align-items: center;
@@ -1177,13 +1122,10 @@ export class RemiCard extends LitElement {
         font-size: 1em;
       }
 
-      .alarms-section-title ha-icon {
-        --mdc-icon-size: 20px;
-      }
-
-      .alarms-section-header > ha-icon {
-        --mdc-icon-size: 24px;
-        color: var(--secondary-text-color);
+      .alarms-section-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
       .alarms-container {
@@ -1204,12 +1146,6 @@ export class RemiCard extends LitElement {
 
       .alarm-card.disabled {
         opacity: 0.6;
-      }
-
-      .alarm-card:hover {
-        background: var(--secondary-background-color);
-        transform: translateY(-2px);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       }
 
       .alarm-header {
@@ -1239,8 +1175,43 @@ export class RemiCard extends LitElement {
         color: var(--secondary-text-color);
       }
 
-      .alarm-card ha-switch {
-        flex-shrink: 0;
+      .alarm-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .icon-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+        color: var(--secondary-text-color);
+      }
+
+      .icon-btn:hover {
+        background: rgba(var(--rgb-primary-text-color), 0.1);
+      }
+
+      .add-btn {
+        color: var(--primary-color);
+      }
+
+      .trigger-btn:hover {
+        color: var(--success-color, #4caf50);
+      }
+
+       .alarm-actions ha-icon {
+        --mdc-icon-size: 24px;
+      }
+
+      .delete-btn:hover {
+        color: var(--error-color, #f44336);
       }
 
       .alarm-details {
@@ -1277,7 +1248,6 @@ declare global {
   }
 }
 
-// Register card in Home Assistant
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'remi-card',
