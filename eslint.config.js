@@ -19,7 +19,9 @@ export default [
         window: 'readonly',
         document: 'readonly',
         customElements: 'readonly',
-        HTMLElement: 'readonly'
+        HTMLElement: 'readonly',
+        console: 'readonly',
+        confirm: 'readonly'
       }
     },
     plugins: {
