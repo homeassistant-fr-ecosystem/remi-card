@@ -536,7 +536,7 @@ export class RemiCard extends LitElement {
     const lang = this._getLanguage();
 
     const deviceName = this._config.device_name || this._config.device_id;
-    const faceImage = faceState ? getFaceIcon(faceState) : getFaceIcon('blankFace');
+    const faceImage = faceState ? getFaceIcon(faceState) : getFaceIcon('blank_face');
     const faceName = faceState ? localizeFace(faceState, lang) : localizeCommon('unknown', lang);
 
     let statusText = '';
