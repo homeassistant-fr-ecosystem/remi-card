@@ -349,9 +349,19 @@ export class RemiCard extends LitElement {
   private _handleFaceSelect(face: string): void {
     if (!this._entities.faceSelect) return;
 
+    // HA select entity expects snake_case options, API uses camelCase
+    const FACE_API_TO_HA: Record<string, string> = {
+      sleepyFace: 'sleepy_face',
+      awakeFace: 'awake_face',
+      blankFace: 'blank_face',
+      semiAwakeFace: 'semi_awake_face',
+      smilyFace: 'smily_face',
+    };
+    const option = FACE_API_TO_HA[face] ?? face;
+
     this.hass.callService('select', 'select_option', {
       entity_id: this._entities.faceSelect,
-      option: face,
+      option,
     });
   }
 
