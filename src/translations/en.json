@@ -8,11 +8,11 @@
     "turn_off": "Turn off"
   },
   "face": {
-    "sleepyFace": "Sleep",
-    "semiAwakeFace": "Semi-awake",
-    "awakeFace": "Awake",
-    "smilyFace": "Smile",
-    "blankFace": "Neutral"
+    "sleepy_face": "Sleep",
+    "semi_awake_face": "Semi-awake",
+    "awake_face": "Awake",
+    "smily_face": "Smile",
+    "blank_face": "Neutral"
   },
   "connectivity": {
     "connected": "Connected",
