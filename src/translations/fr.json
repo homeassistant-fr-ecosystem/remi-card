@@ -28,7 +28,19 @@
     "add_alarm": "Ajouter un réveil",
     "delete_alarm": "Supprimer le réveil",
     "trigger_alarm": "Tester le réveil",
-    "confirm_delete": "Êtes-vous sûr de vouloir supprimer ce réveil ?"
+    "confirm_delete": "Êtes-vous sûr de vouloir supprimer ce réveil ?",
+    "confirm_delete_yes": "Confirmer la suppression",
+    "confirm_delete_no": "Annuler",
+    "new_alarm_name": "Nouveau réveil",
+    "days": {
+      "0": "Lun",
+      "1": "Mar",
+      "2": "Mer",
+      "3": "Jeu",
+      "4": "Ven",
+      "5": "Sam",
+      "6": "Dim"
+    }
   },
   "editor": {
     "device_id": "Device ID de l'appareil (ex: 92474ef24f3f053a9380bff6cba5cc82)",
