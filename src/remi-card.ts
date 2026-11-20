@@ -308,16 +308,17 @@ export class RemiCard extends LitElement {
 
     const deviceId = this._config.device_id;
 
-    // Find all alarm time entities for this device
-    const alarmEntities = Object.keys(this.hass.states)
-      .filter(entityId =>
-        entityId.startsWith(`time.remi_${deviceId}_`) &&
-        entityId.endsWith('_time')
-      );
-
     const base = this._config.device_name
       ? this._slugify(this._config.device_name)
       : deviceId;
+
+    // Find all alarm time entities for this device.
+    // The integration exposes them as ``time.<device_name_slug>_<alarm_name_slug>``
+    // (e.g. ``time.garance_week_night``), without a ``remi_`` prefix or ``_time``
+    // suffix. We therefore match on the device name slug only, consistently
+    // with the other entities (face, light, temperature, etc.).
+    const alarmEntities = Object.keys(this.hass.states)
+      .filter(entityId => entityId.startsWith(`time.${base}_`));
 
     // The face is exposed by the integration via a select entity, not a
     // dedicated sensor, so there is no ``sensor.*_face`` to read.
