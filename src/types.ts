@@ -1,7 +1,7 @@
 export interface RemiCardConfig {
   type: string;
   device_id: string;
-  device_prefix: string;
+  device_prefix?: string;
   device_name?: string;
   title?: string;
   show_controls?: boolean;

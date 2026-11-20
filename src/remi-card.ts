@@ -8,6 +8,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
 import { getFaceIcon, FACE_STATES } from './face-images';
 import { localize, localizeFace, localizeCommon } from './localize';
+import { RemiCardConfig } from './types';
 
 /**
  * Base interface for Home Assistant entity state
@@ -92,19 +93,8 @@ interface TimeEntity extends HassEntity {
 
 /**
  * Configuration interface for the Rémi Card
+ * Defined in src/types.ts (shared with the editor) and imported above.
  */
-interface RemiCardConfig {
-  type: string;
-  device_id: string;
-  device_name?: string;
-  title?: string;
-  show_controls?: boolean;
-  show_face_selector?: boolean;
-  show_temperature_graph?: boolean;
-  show_connectivity?: boolean;
-  show_alarm_clocks?: boolean;
-  hours_to_show?: number;
-}
 
 /**
  * Entity identifiers for Rémi device sensors and controls
@@ -311,9 +301,11 @@ export class RemiCard extends LitElement {
 
     const deviceId = this._config.device_id;
 
-    const base = this._config.device_name
-      ? this._slugify(this._config.device_name)
-      : deviceId;
+    const base = this._config.device_prefix
+      ? this._slugify(this._config.device_prefix)
+      : this._config.device_name
+        ? this._slugify(this._config.device_name)
+        : deviceId;
 
     // Find all alarm time entities for this device.
     // The integration exposes them as ``time.<device_name_slug>_<alarm_name_slug>``
