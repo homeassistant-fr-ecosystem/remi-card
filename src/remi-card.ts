@@ -180,6 +180,9 @@ export class RemiCard extends LitElement {
     musicMode: null,
   };
   @state() private _alarmsExpanded = false;
+  @state() private _addAlarmDialog = false;
+  @state() private _deleteAlarmId: string | null = null;
+  @state() private _deleteAlarmName = '';
 
   /**
    * Get a default stub configuration for the card
@@ -828,6 +831,98 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Open the add alarm dialog
+   */
+  private _handleAddAlarmOpen(): void {
+    this._addAlarmDialog = true;
+  }
+
+  /**
+   * Close the add alarm dialog
+   */
+  private _handleAddAlarmClose(): void {
+    this._addAlarmDialog = false;
+  }
+
+  /**
+   * Submit the add alarm form
+   * Calls the urbanhello_remi.create_alarm service
+   * @param e - The form submit event
+   */
+  private _handleAddAlarmSubmit(e: Event): void {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+
+    const time = (formData.get('time') as string) || '';
+    if (!time) return;
+
+    const name = (formData.get('name') as string) || undefined;
+    const enabled = formData.get('enabled') === 'on';
+    const days = Array.from(formData.getAll('days')).map(Number);
+
+    this.hass.callService('urbanhello_remi', 'create_alarm', {
+      time,
+      name,
+      enabled,
+      days,
+    }, {
+      device_id: this._config.device_id,
+    });
+
+    this._addAlarmDialog = false;
+    form.reset();
+  }
+
+  /**
+   * Trigger (test) an alarm
+   * Calls the urbanhello_remi.trigger_alarm service
+   * @param alarmId - The alarm ID to trigger
+   */
+  private _handleTriggerAlarm(alarmId: string): void {
+    this.hass.callService('urbanhello_remi', 'trigger_alarm', {
+      alarm_id: alarmId,
+    }, {
+      device_id: this._config.device_id,
+    });
+  }
+
+  /**
+   * Prepare the deletion of an alarm (opens confirmation dialog)
+   * @param alarmId - The alarm ID to delete
+   * @param alarmName - The alarm name for the confirmation message
+   */
+  private _handleDeleteAlarmPrepare(alarmId: string, alarmName: string): void {
+    this._deleteAlarmId = alarmId;
+    this._deleteAlarmName = alarmName;
+  }
+
+  /**
+   * Cancel the deletion of an alarm
+   */
+  private _handleDeleteAlarmCancel(): void {
+    this._deleteAlarmId = null;
+    this._deleteAlarmName = '';
+  }
+
+  /**
+   * Confirm the deletion of an alarm
+   * Calls the urbanhello_remi.delete_alarm service
+   */
+  private _handleDeleteAlarmConfirm(): void {
+    if (!this._deleteAlarmId) return;
+
+    this.hass.callService('urbanhello_remi', 'delete_alarm', {
+      alarm_id: this._deleteAlarmId,
+    }, {
+      device_id: this._config.device_id,
+    });
+
+    this._deleteAlarmId = null;
+    this._deleteAlarmName = '';
+  }
+
+  /**
    * Render the alarm clocks section
    * Shows all configured alarm clocks for this device
    * @returns Template result for the alarm clocks section
@@ -847,6 +942,11 @@ export class RemiCard extends LitElement {
             <ha-icon icon="mdi:alarm-multiple"></ha-icon>
             <span>⏰ ${localize('alarm.title', lang)} (${alarmsCount})</span>
           </div>
+          <ha-icon-button
+            icon="mdi:plus"
+            @click=${(e: Event) => { e.stopPropagation(); this._handleAddAlarmOpen(); }}
+            title="${localize('alarm.add_alarm', lang)}"
+          ></ha-icon-button>
           <ha-icon icon=${this._alarmsExpanded ? 'mdi:chevron-up' : 'mdi:chevron-down'}></ha-icon>
         </div>
         ${this._alarmsExpanded ? html`
@@ -885,14 +985,32 @@ export class RemiCard extends LitElement {
                     <div class="alarm-time">${alarmTime}</div>
                     <div class="alarm-name">${alarmName}</div>
                   </div>
-                  ${switchState
-                    ? html`
-                        <ha-switch
-                          .checked=${isAlarmEnabled}
-                          @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
-                        ></ha-switch>
-                      `
-                    : ''}
+                  <div class="alarm-actions">
+                    ${switchState
+                      ? html`
+                          <ha-switch
+                            .checked=${isAlarmEnabled}
+                            @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
+                          ></ha-switch>
+                        `
+                      : ''}
+                    <ha-icon-button
+                      icon="mdi:alarm"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this._handleTriggerAlarm(alarmId);
+                      }}
+                      title="${localize('alarm.trigger_alarm', lang)}"
+                    ></ha-icon-button>
+                    <ha-icon-button
+                      icon="mdi:delete-outline"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this._handleDeleteAlarmPrepare(alarmId, alarmName);
+                      }}
+                      title="${localize('alarm.delete_alarm', lang)}"
+                    ></ha-icon-button>
+                  </div>
                 </div>
                 <div class="alarm-details">
                   ${days.length > 0
@@ -943,6 +1061,88 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Render the add alarm dialog
+   * Opens a form to create a new alarm via the urbanhello_remi.create_alarm service
+   * @returns Template result for the dialog, or empty if closed
+   */
+  private _renderAddAlarmDialog(): TemplateResult {
+    if (!this._addAlarmDialog) return html``;
+    const lang = this._getLanguage();
+
+    return html`
+      <div class="modal-backdrop" @click=${this._handleAddAlarmClose}></div>
+      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-content">
+          <h3>${localize('alarm.add_alarm', lang)}</h3>
+          <form @submit=${this._handleAddAlarmSubmit}>
+            <div class="form-field">
+              <label>${localize('alarm.new_alarm_name', lang)}</label>
+              <input type="text" name="name" placeholder="${localize('alarm.new_alarm_name', lang)}" />
+            </div>
+            <div class="form-field">
+              <label>${localize('alarm.time', lang)}</label>
+              <input type="time" name="time" required />
+            </div>
+            <div class="form-field">
+              <label>${localize('alarm.enabled', lang)}</label>
+              <input type="checkbox" name="enabled" checked />
+            </div>
+            <div class="form-field days">
+              <label>${localize('alarm.days.title', lang)}</label>
+              <div class="day-checkboxes">
+                ${[0, 1, 2, 3, 4, 5, 6].map(
+                  (i) => html`
+                    <label class="day-checkbox">
+                      <input type="checkbox" name="days" value="${i}" />
+                      <span>${localize(`alarm.days.${i}`, lang)}</span>
+                    </label>
+                  `
+                )}
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="button" @click=${this._handleAddAlarmClose}>
+                ${localize('alarm.confirm_delete_no', lang)}
+              </button>
+              <button type="submit">${localize('alarm.add_alarm', lang)}</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    `;
+  }
+
+  /**
+   * Render the delete confirmation dialog
+   * Asks for confirmation before calling urbanhello_remi.delete_alarm
+   * @returns Template result for the dialog, or empty if closed
+   */
+  private _renderDeleteConfirmationDialog(): TemplateResult {
+    if (!this._deleteAlarmId) return html``;
+    const lang = this._getLanguage();
+
+    return html`
+      <div class="modal-backdrop" @click=${this._handleDeleteAlarmCancel}></div>
+      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-content">
+          <h3>${localize('alarm.delete_alarm', lang)}</h3>
+          <p>
+            ${localize('alarm.confirm_delete', lang)} "${this._deleteAlarmName}"?
+          </p>
+          <div class="form-actions">
+            <button type="button" @click=${this._handleDeleteAlarmCancel}>
+              ${localize('alarm.confirm_delete_no', lang)}
+            </button>
+            <button type="button" @click=${this._handleDeleteAlarmConfirm} class="delete">
+              ${localize('alarm.confirm_delete_yes', lang)}
+            </button>
+          </div>
+        </div>
+      </dialog>
+    `;
+  }
+
+  /**
    * Render the complete card
    * Combines all sections based on configuration
    * @returns Template result for the entire card
@@ -961,6 +1161,8 @@ export class RemiCard extends LitElement {
         ${this._config.show_controls ? this._renderDeviceSettings() : ''}
         ${this._config.show_temperature_graph ? this._renderTemperatureGraph() : ''}
         ${this._config.show_connectivity ? this._renderConnectivity() : ''}
+        ${this._renderAddAlarmDialog()}
+        ${this._renderDeleteConfirmationDialog()}
       </ha-card>
     `;
   }
@@ -1441,6 +1643,151 @@ export class RemiCard extends LitElement {
 
       .alarm-detail-item span {
         color: var(--secondary-text-color);
+      }
+
+      .alarm-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .alarm-actions ha-icon-button {
+        --mdc-icon-size: 20px;
+        color: var(--secondary-text-color);
+      }
+
+      .alarm-actions ha-icon-button:hover {
+        color: var(--primary-color);
+      }
+
+      .alarm-actions ha-icon-button.delete:hover,
+      .alarm-actions ha-icon-button[icon="mdi:delete-outline"]:hover {
+        color: var(--error-color, #f44336);
+      }
+
+      /* --- Add alarm / delete confirmation dialogs --- */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 100;
+        backdrop-filter: blur(2px);
+      }
+
+      .modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        padding: 20px;
+        min-width: 320px;
+        max-width: 480px;
+        max-height: 90vh;
+        overflow-y: auto;
+        z-index: 101;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      .modal h3 {
+        margin: 0 0 16px 0;
+        font-size: 1.25em;
+        font-weight: bold;
+        color: var(--primary-text-color);
+      }
+
+      .modal p {
+        margin: 0 0 16px 0;
+        color: var(--primary-text-color);
+      }
+
+      .form-field {
+        margin-bottom: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .form-field label {
+        font-size: 0.9em;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+
+      .form-field input[type="text"],
+      .form-field input[type="time"] {
+        padding: 8px;
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.95em;
+      }
+
+      .form-field input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+      }
+
+      .form-field.days label {
+        align-items: center;
+        flex-direction: row;
+        gap: 8px;
+        margin-bottom: 0;
+      }
+
+      .day-checkboxes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .day-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85em;
+        cursor: pointer;
+      }
+
+      .day-checkbox input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+      }
+
+      .form-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--divider-color);
+      }
+
+      .form-actions button {
+        padding: 8px 16px;
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.9em;
+        cursor: pointer;
+      }
+
+      .form-actions button:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .form-actions button.delete {
+        border-color: var(--error-color, #f44336);
+        color: var(--error-color, #f44336);
+      }
+
+      .form-actions button.delete:hover {
+        background: var(--error-color, #f44336);
+        color: var(--card-background-color);
       }
     `;
   }
