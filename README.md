@@ -88,6 +88,20 @@ hours_to_show: 24
 | `show_connectivity` | boolean | `true` | Show WiFi connectivity status |
 | `hours_to_show` | number | `24` | Hours to show in temperature graph label |
 
+### ⚠️ Connectivity and RSSI
+
+The **Connectivity** (`binary_sensor.*_connectivity`) and **RSSI** (`sensor.*_rssi`) entities are **disabled by default** in the `urbanhello_remi` integration. When the `remi-card` connectivity section is enabled but these entities are not enabled in Home Assistant, the card displays a message inviting you to enable them.
+
+To enable them:
+
+1. Go to **Settings** → **Devices & Services**
+2. Select your **Rémi UrbanHello** integration
+3. Find the **Connectivity** and **RSSI** entities (diagnostic)
+4. Click on each and **enable** them
+5. Refresh the dashboard
+
+Once enabled, the card will show the WiFi connection status and signal strength.
+
 ## Required Entities
 
 The card expects the following entities to exist (where `{device_id}` is your configured device ID):

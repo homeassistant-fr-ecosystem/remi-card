@@ -16,7 +16,25 @@
   },
   "connectivity": {
     "connected": "Connected",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "not_available": "Connectivity not available. Enable the connectivity entity in the integration settings."
+  },
+  "firmware": {
+    "version": "Firmware version"
+  },
+  "settings": {
+    "title": "Device settings"
+  },
+  "clock_format": {
+    "title": "Clock format",
+    "12h": "12h",
+    "24h": "24h"
+  },
+  "music_mode": {
+    "title": "Music mode",
+    "off": "Off",
+    "music": "Music",
+    "white_noise": "White noise"
   },
   "temperature": {
     "title": "Temperature",

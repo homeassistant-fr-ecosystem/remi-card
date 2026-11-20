@@ -96,6 +96,10 @@ interface RemiEntity {
   temperature: string | null;
   connectivity: string | null;
   rssi: string | null;
+  luminosity: string | null;
+  firmwareVersion: string | null;
+  clockFormat: string | null;
+  musicMode: string | null;
 }
 
 /**
@@ -123,6 +127,18 @@ declare global {
 }
 
 /**
+ * Mapping of HA select option (snake_case) to API face key (camelCase)
+ * Used to convert the face select entity state back to the card's face keys
+ */
+const FACE_HA_TO_API: Record<string, string> = {
+  sleepy_face: 'sleepyFace',
+  awake_face: 'awakeFace',
+  blank_face: 'blankFace',
+  semi_awake_face: 'semiAwakeFace',
+  smily_face: 'smilyFace',
+};
+
+/**
  * Custom Lovelace card for Rémi UrbanHello devices
  */
 @customElement('remi-card')
@@ -136,6 +152,10 @@ export class RemiCard extends LitElement {
     temperature: null,
     connectivity: null,
     rssi: null,
+    luminosity: null,
+    firmwareVersion: null,
+    clockFormat: null,
+    musicMode: null,
   };
 
   /**
@@ -237,20 +257,47 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Update entity identifiers based on the device ID
-   * Constructs entity IDs for all Rémi device sensors and controls
+   * Slugify a device name to build entity IDs
+   * Matches Home Assistant entity_id generation from the device name
+   * @param name - The device name
+   * @returns A slugified string safe for entity IDs
+   */
+  private _slugify(name: string): string {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  /**
+   * Update entity identifiers based on the device name
+   * Constructs entity IDs for all Rémi device sensors and controls.
+   *
+   * The integration generates entity_ids from the device name slugified
+   * (e.g. ``select.baby_room_face``), not from the device id. We therefore
+   * derive the entity base from ``device_name`` (falling back to ``device_id``).
    */
   private _updateEntities(): void {
     if (!this.hass || !this._config) return;
 
-    const deviceId = this._config.device_id;
+    const base = this._config.device_name
+      ? this._slugify(this._config.device_name)
+      : this._config.device_id;
+
+    // The face is exposed by the integration via a select entity, not a
+    // dedicated sensor, so there is no ``sensor.*_face`` to read.
     this._entities = {
-      face: `sensor.remi_${deviceId}_face`,
-      faceSelect: `select.remi_${deviceId}_face`,
-      light: `light.remi_${deviceId}_night_light`,
-      temperature: `sensor.remi_${deviceId}_temperature`,
-      connectivity: `binary_sensor.remi_${deviceId}_connectivity`,
-      rssi: `sensor.remi_${deviceId}_rssi`,
+      face: null,
+      faceSelect: `select.${base}_face`,
+      light: `light.${base}_night_light`,
+      temperature: `sensor.${base}_temperature`,
+      connectivity: `binary_sensor.${base}_connectivity`,
+      rssi: `sensor.${base}_rssi`,
+      luminosity: `sensor.${base}_luminosity`,
+      firmwareVersion: `sensor.${base}_firmware_version`,
+      clockFormat: `select.${base}_clock_format`,
+      musicMode: `select.${base}_music_mode`,
     };
   }
 
@@ -266,12 +313,14 @@ export class RemiCard extends LitElement {
 
   /**
    * Get the current face state
-   * @returns The face state string or null if unavailable
+   * The face is exposed by the integration via a select entity (snake_case),
+   * not a dedicated sensor.
+   * @returns The face state in snake_case (e.g. 'sleepy_face') or null if unavailable
    */
   private _getFaceState(): string | null {
-    const faceEntity = this._getState(this._entities.face) as SensorEntity | undefined;
-    if (!faceEntity || faceEntity.state === 'unavailable') return null;
-    return faceEntity.state;
+    const faceSelectEntity = this._getState(this._entities.faceSelect) as SelectEntity | undefined;
+    if (!faceSelectEntity || faceSelectEntity.state === 'unavailable') return null;
+    return faceSelectEntity.state;
   }
 
   /**
@@ -312,6 +361,51 @@ export class RemiCard extends LitElement {
    */
   private _getRssiState(): SensorEntity | undefined {
     return this._getState(this._entities.rssi) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the ambient luminosity sensor state
+   * @returns The sensor entity state object or undefined if not found
+   */
+  private _getLuminosityState(): SensorEntity | undefined {
+    return this._getState(this._entities.luminosity) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the firmware version sensor state
+   * @returns The sensor entity state object or undefined if not found
+   */
+  private _getFirmwareVersionState(): SensorEntity | undefined {
+    return this._getState(this._entities.firmwareVersion) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the clock format select state
+   * @returns The select entity state object or undefined if not found
+   */
+  private _getClockFormatState(): SelectEntity | undefined {
+    return this._getState(this._entities.clockFormat) as SelectEntity | undefined;
+  }
+
+  /**
+   * Get the music mode select state
+   * @returns The select entity state object or undefined if not found
+   */
+  private _getMusicModeState(): SelectEntity | undefined {
+    return this._getState(this._entities.musicMode) as SelectEntity | undefined;
+  }
+
+  /**
+   * Change the selected option of a select entity
+   * @param entityId - The select entity ID
+   * @param option - The option to select
+   */
+  private _handleSelectOption(entityId: string | null, option: string): void {
+    if (!entityId) return;
+    this.hass.callService('select', 'select_option', {
+      entity_id: entityId,
+      option,
+    });
   }
 
   /**
@@ -413,10 +507,14 @@ export class RemiCard extends LitElement {
    * @returns Template result for the header section
    */
   private _renderHeader(): TemplateResult {
-    const faceState = this._getFaceState();
+    const faceStateHA = this._getFaceState(); // snake_case (e.g. 'sleepy_face') or null
     const lightState = this._getLightState();
     const tempState = this._getTemperatureState();
+    const luminosityState = this._getLuminosityState();
     const lang = this._getLanguage();
+
+    // Convert HA snake_case face to API camelCase for icon and localization
+    const faceState = faceStateHA ? (FACE_HA_TO_API[faceStateHA] ?? faceStateHA) : null;
 
     const deviceName = this._config.device_name || this._config.device_id;
     const faceImage = faceState ? getFaceIcon(faceState) : getFaceIcon('blankFace');
@@ -425,6 +523,9 @@ export class RemiCard extends LitElement {
     let statusText = '';
     if (tempState && tempState.state !== 'unavailable') {
       statusText += `${tempState.state}°C`;
+    }
+    if (luminosityState && luminosityState.state !== 'unavailable') {
+      statusText += ` • ${luminosityState.state} lx`;
     }
     statusText += ` • ${faceName}`;
 
@@ -502,7 +603,10 @@ export class RemiCard extends LitElement {
     const faceSelectEntity = this._getFaceSelectState();
     if (!faceSelectEntity) return html``;
 
-    const currentFace = faceSelectEntity.state;
+    // The select entity state is snake_case (e.g. 'sleepy_face'), convert to
+    // camelCase to match FACE_STATES used for icons and labels
+    const currentFaceHA = faceSelectEntity.state;
+    const currentFace = FACE_HA_TO_API[currentFaceHA] ?? currentFaceHA;
     const lang = this._getLanguage();
 
     const faceOptions = FACE_STATES.map((face) => ({
@@ -527,6 +631,60 @@ export class RemiCard extends LitElement {
             `
           )}
         </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render the device settings section
+   * Shows clock format and music mode select controls
+   * @returns Template result for the device settings section
+   */
+  private _renderDeviceSettings(): TemplateResult {
+    const clockFormatState = this._getClockFormatState();
+    const musicModeState = this._getMusicModeState();
+    const lang = this._getLanguage();
+
+    if (!clockFormatState && !musicModeState) return html``;
+
+    return html`
+      <div class="section">
+        <div class="section-title">${localize('settings.title', lang)}</div>
+        ${clockFormatState
+          ? html`
+              <div class="select-control">
+                <label>${localize('clock_format.title', lang)}</label>
+                <select
+                  .value=${clockFormatState.state || ''}
+                  @change=${(e: Event) => {
+                    const target = e.target as HTMLSelectElement;
+                    this._handleSelectOption(this._entities.clockFormat, target.value);
+                  }}
+                >
+                  <option value="12h">${localize('clock_format.12h', lang)}</option>
+                  <option value="24h">${localize('clock_format.24h', lang)}</option>
+                </select>
+              </div>
+            `
+          : ''}
+        ${musicModeState
+          ? html`
+              <div class="select-control">
+                <label>${localize('music_mode.title', lang)}</label>
+                <select
+                  .value=${musicModeState.state || ''}
+                  @change=${(e: Event) => {
+                    const target = e.target as HTMLSelectElement;
+                    this._handleSelectOption(this._entities.musicMode, target.value);
+                  }}
+                >
+                  <option value="off">${localize('music_mode.off', lang)}</option>
+                  <option value="music">${localize('music_mode.music', lang)}</option>
+                  <option value="white_noise">${localize('music_mode.white_noise', lang)}</option>
+                </select>
+              </div>
+            `
+          : ''}
       </div>
     `;
   }
@@ -562,9 +720,20 @@ export class RemiCard extends LitElement {
   private _renderConnectivity(): TemplateResult {
     const connectivityState = this._getConnectivityState();
     const rssiState = this._getRssiState();
+    const firmwareState = this._getFirmwareVersionState();
 
     if (!connectivityState || connectivityState.state === 'unavailable') {
-      return html``;
+      const lang = this._getLanguage();
+      return html`
+        <div class="section">
+          <div class="connectivity">
+            <div class="connectivity-item disconnected">
+              <ha-icon icon="mdi:wifi-off"></ha-icon>
+              <span>${localize('connectivity.not_available', lang)}</span>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     const isConnected = connectivityState.state === 'on';
@@ -582,6 +751,14 @@ export class RemiCard extends LitElement {
                 <div class="connectivity-item">
                   <ha-icon icon="mdi:wifi-strength-3"></ha-icon>
                   <span>${rssiState.state} dBm</span>
+                </div>
+              `
+            : ''}
+          ${firmwareState && firmwareState.state !== 'unavailable'
+            ? html`
+                <div class="connectivity-item">
+                  <ha-icon icon="mdi:chip"></ha-icon>
+                  <span>${localize('firmware.version', lang)}: ${firmwareState.state}</span>
                 </div>
               `
             : ''}
@@ -605,6 +782,7 @@ export class RemiCard extends LitElement {
         ${this._renderHeader()}
         ${this._config.show_face_selector ? this._renderFaceSelector() : ''}
         ${this._config.show_controls ? this._renderLightControls() : ''}
+        ${this._config.show_controls ? this._renderDeviceSettings() : ''}
         ${this._config.show_temperature_graph ? this._renderTemperatureGraph() : ''}
         ${this._config.show_connectivity ? this._renderConnectivity() : ''}
       </ha-card>
@@ -885,6 +1063,42 @@ export class RemiCard extends LitElement {
           width: 30px;
           height: 30px;
         }
+      }
+
+      .select-control {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: var(--secondary-background-color);
+        margin-bottom: 8px;
+      }
+
+      .select-control:last-child {
+        margin-bottom: 0;
+      }
+
+      .select-control label {
+        font-size: 0.9em;
+        color: var(--primary-text-color);
+        min-width: 120px;
+      }
+
+      .select-control select {
+        flex: 1;
+        padding: 6px 10px;
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.9em;
+        cursor: pointer;
+      }
+
+      .select-control select:focus {
+        outline: none;
+        border-color: var(--primary-color);
       }
 
       .graph-placeholder {

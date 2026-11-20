@@ -16,7 +16,25 @@
   },
   "connectivity": {
     "connected": "Connecté",
-    "disconnected": "Déconnecté"
+    "disconnected": "Déconnecté",
+    "not_available": "Connectivité indisponible. Activez l'entité de connectivité dans les réglages de l'intégration."
+  },
+  "firmware": {
+    "version": "Version du firmware"
+  },
+  "settings": {
+    "title": "Réglages appareil"
+  },
+  "clock_format": {
+    "title": "Format horaire",
+    "12h": "12h",
+    "24h": "24h"
+  },
+  "music_mode": {
+    "title": "Mode musique",
+    "off": "Désactivé",
+    "music": "Musique",
+    "white_noise": "Bruit blanc"
   },
   "temperature": {
     "title": "Température",
