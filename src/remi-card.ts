@@ -252,9 +252,19 @@ export class RemiCard extends LitElement {
         return true;
       }
 
-      // Check if any of our entities changed
-      const entities = Object.values(this._entities).filter((e) => e !== null);
-      return entities.some((entityId) => {
+      // Check if any of our entities changed, including the derived switch
+      // entities for each alarm. Without the switches here, a state change on
+      // an alarm switch would not trigger a re-render.
+      const watchedEntities = Object.values(this._entities).filter(
+        (e): e is string => e !== null,
+      );
+
+      for (const alarmId of this._entities.alarms) {
+        const name = alarmId.replace('time.', '').replace('_time', '');
+        watchedEntities.push(`switch.${name}`);
+      }
+
+      return watchedEntities.some((entityId) => {
         return oldHass.states[entityId] !== this.hass.states[entityId];
       });
     }
@@ -814,9 +824,9 @@ export class RemiCard extends LitElement {
     event.stopPropagation(); // Prevent opening more-info dialog
 
     const switchState = this._getState(switchEntityId);
-    if (!switchState) return;
-
-    const service = switchState.state === 'on' ? 'turn_off' : 'turn_on';
+    // Default to turning on when the current state is not yet known.
+    const isCurrentlyOn = switchState?.state === 'on';
+    const service = isCurrentlyOn ? 'turn_off' : 'turn_on';
     this.hass.callService('switch', service, {
       entity_id: switchEntityId,
     });
@@ -978,14 +988,10 @@ export class RemiCard extends LitElement {
                     <div class="alarm-name">${alarmName}</div>
                   </div>
                   <div class="alarm-actions">
-                    ${switchState
-                      ? html`
-                          <ha-switch
-                            .checked=${isAlarmEnabled}
-                            @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
-                          ></ha-switch>
-                        `
-                      : ''}
+                    <ha-switch
+                      .checked=${isAlarmEnabled}
+                      @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
+                    ></ha-switch>
                     <ha-icon-button
                       icon="mdi:alarm"
                       @click=${(e: Event) => {
