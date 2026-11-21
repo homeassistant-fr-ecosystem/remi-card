@@ -18,7 +18,7 @@
     "urbanhello"
   ],
   "scripts": {
-    "build": "rollup -c",
+    "build": "node scripts/generate-version.js && rollup -c",
     "watch": "rollup -c -w",
     "lint": "eslint src",
     "test": "vitest run",

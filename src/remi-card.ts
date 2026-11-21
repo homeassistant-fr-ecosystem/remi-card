@@ -22,6 +22,7 @@ import {
   stateNumber,
   type HassEntity,
 } from './format';
+import { VERSION } from './version.generated';
 
 /**
  * Light entity state with brightness attribute
@@ -2293,10 +2294,11 @@ window.customCards.push({
 });
 
 // Version banner: makes it obvious in the browser console which build is loaded
-// when a user reports an issue.
+// when a user reports an issue. The version is read from package.json at build
+// time via scripts/generate-version.js (see vigieau-card for the same pattern).
 // eslint-disable-next-line no-console
 console.info(
-  `%c REMI-CARD %c v1.0.0 `,
+  `%c REMI-CARD %c v${VERSION} `,
   'color:#fff;background:#ff6d00;font-weight:700;border-radius:4px 0 0 4px;',
   'color:#ff6d00;background:transparent;font-weight:700;border-radius:0 4px 4px 0;',
 );
