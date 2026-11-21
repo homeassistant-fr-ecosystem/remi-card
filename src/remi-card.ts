@@ -6,13 +6,15 @@
 import { LitElement, html, css, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
-import { getFaceIcon, FACE_STATES } from './face-images';
+import { getFaceIcon, FACE_STATES, FACE_HA_TO_API, FACE_API_TO_HA } from './face-images';
 import { localize, localizeFace, localizeCommon } from './localize';
+import { getLanguage, t } from './i18n-helper';
 import { RemiCardConfig, type SectionId } from './types';
 import {
   discoverEntities,
   discoverAlarms,
   alarmSwitchEntityId,
+  configBase,
   type DiscoveredEntities,
 } from './entities';
 import {
@@ -117,18 +119,6 @@ declare global {
   }
 }
 
-/**
- * Mapping of HA select option (snake_case) to API face key (camelCase)
- * Used to convert the face select entity state back to the card's face keys
- */
-const FACE_HA_TO_API: Record<string, string> = {
-  sleepy_face: 'sleepyFace',
-  awake_face: 'awakeFace',
-  blank_face: 'blankFace',
-  semi_awake_face: 'semiAwakeFace',
-  smily_face: 'smilyFace',
-};
-
 /** Collapsible section identifiers. `status` (header) is always visible. */
 export const SECTION_IDS = [
   'face_selector',
@@ -184,6 +174,9 @@ export class RemiCard extends LitElement {
 
   /** User toggles on the collapsible section headers: `true` = expanded. */
   @state() private _sectionOverrides = new Map<string, boolean>();
+
+  /** Last service-call error shown to the user (null when none). */
+  @state() private _serviceError: string | null = null;
 
   private _unsubscribe?: () => void;
 
@@ -248,7 +241,9 @@ export class RemiCard extends LitElement {
    * @returns Card height in grid rows
    */
   public getCardSize(): number {
-    return 5;
+    // Estimate grid rows: header (2) + one row per active section, min 5, max 12.
+    const sectionCount = this._config ? this._sections.length : 0;
+    return Math.min(12, Math.max(5, 2 + sectionCount));
   }
 
   public override connectedCallback(): void {
@@ -347,11 +342,7 @@ export class RemiCard extends LitElement {
   private _refreshEntities(): void {
     if (!this.hass || !this._config) return;
 
-    const base = this._slugify(
-      this._config.device_prefix ??
-      this._config.device_name ??
-      this._config.device_id,
-    );
+    const base = configBase(this._config);
     this._entities = discoverEntities(this.hass, this._config);
     this._alarms = discoverAlarms(this.hass, base);
   }
@@ -396,13 +387,13 @@ export class RemiCard extends LitElement {
         if (isOnLight && brightness !== undefined) {
           return { text: `${Math.round((brightness / 255) * 100)}%` };
         }
-        return { text: isOnLight ? this._t('common.on') : this._t('common.off') };
+        return { text: isOnLight ? t('common.on', this.hass) : t('common.off', this.hass) };
       }
       case 'temperature_graph': {
         const tempState = this._getTemperatureState();
         if (!isAvailable(tempState)) return null;
         return {
-          text: `${formatNumber(stateNumber(tempState), 1, this._getLanguage())}°C`,
+          text: `${formatNumber(stateNumber(tempState), 1, getLanguage(this.hass))}°C`,
           entityId: this._entities.temperature,
         };
       }
@@ -411,8 +402,9 @@ export class RemiCard extends LitElement {
         if (!connectivityState) return null;
         const isConnected = connectivityState.state === 'on';
         return {
-          text: this._t(
+          text: t(
             `connectivity.${isConnected ? 'connected' : 'disconnected'}`,
+            this.hass,
           ),
           entityId: this._entities.connectivity,
         };
@@ -429,7 +421,7 @@ export class RemiCard extends LitElement {
       case 'face_selector': {
         const faceState = this._getFaceState();
         if (!faceState) return null;
-        return { text: localizeFace(faceState, this._getLanguage()) };
+        return { text: localizeFace(faceState, getLanguage(this.hass)) };
       }
       case 'device_settings':
       case 'device_info':
@@ -471,7 +463,7 @@ export class RemiCard extends LitElement {
               class="chevron"
               icon=${expanded ? 'mdi:chevron-down' : 'mdi:chevron-right'}
             ></ha-icon>
-            <span class="section-title">${this._t(SECTION_TITLE_KEYS[section])}</span>
+            <span class="section-title">${t(SECTION_TITLE_KEYS[section], this.hass)}</span>
           </button>
           ${summary
             ? html`<span
@@ -519,27 +511,6 @@ export class RemiCard extends LitElement {
       default:
         return nothing;
     }
-  }
-
-  /**
-   * Get a translation key, preferring the pushed states context language.
-   */
-  private _t(key: string): string {
-    return localize(key, this._getLanguage());
-  }
-
-  /**
-   * Slugify a device name to build entity IDs
-   * Matches Home Assistant entity_id generation from the device name
-   * @param name - The device name
-   * @returns A slugified string safe for entity IDs
-   */
-  private _slugify(name: string): string {
-    return name
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
   }
 
   /**
@@ -691,18 +662,10 @@ export class RemiCard extends LitElement {
    */
   private _handleSelectOption(entityId: string | null | undefined, option: string): void {
     if (!entityId) return;
-    this.hass.callService('select', 'select_option', {
+    this._callService('select', 'select_option', {
       entity_id: entityId,
       option,
     });
-  }
-
-  /**
-   * Get the user's language from Home Assistant
-   * @returns The language code (e.g., "en", "fr")
-   */
-  private _getLanguage(): string {
-    return this.hass?.locale?.language || this.hass?.language || 'en';
   }
 
   /**
@@ -714,15 +677,55 @@ export class RemiCard extends LitElement {
     if (!this._entities.night_light) return;
 
     if (brightness === 0) {
-      this.hass.callService('light', 'turn_off', {
+      this._callService('light', 'turn_off', {
         entity_id: this._entities.night_light,
       });
     } else {
-      this.hass.callService('light', 'turn_on', {
+      this._callService('light', 'turn_on', {
         entity_id: this._entities.night_light,
         brightness_pct: brightness,
       });
     }
+  }
+
+  /**
+   * Call a Home Assistant service with error handling.
+   * Wraps `hass.callService` in a try/catch and surfaces errors to the user
+   * via a temporary in-card error banner.
+   * @param domain - Service domain (e.g. 'light', 'select')
+   * @param service - Service name (e.g. 'turn_on', 'select_option')
+   * @param serviceData - Service call data
+   * @param target - Optional service target (e.g. { device_id })
+   */
+  private _callService(
+    domain: string,
+    service: string,
+    serviceData: Record<string, unknown>,
+    target?: Record<string, unknown>,
+  ): void {
+    if (!this.hass) {
+      this._showError('Home Assistant n\'est pas disponible.');
+      return;
+    }
+    try {
+      this.hass.callService(domain, service, serviceData, target);
+    } catch (err) {
+      this._showError(
+        err instanceof Error ? err.message : 'Erreur lors de l\'appel de service.',
+      );
+    }
+  }
+
+  /**
+   * Display a temporary error message to the user.
+   * The banner auto-hides after 5 seconds.
+   * @param message - Error message to show
+   */
+  private _showError(message: string): void {
+    this._serviceError = message;
+    window.setTimeout(() => {
+      this._serviceError = null;
+    }, 5000);
   }
 
   /**
@@ -733,30 +736,12 @@ export class RemiCard extends LitElement {
     if (!this._entities.face) return;
 
     // HA select entity expects snake_case options, API uses camelCase
-    const FACE_API_TO_HA: Record<string, string> = {
-      sleepyFace: 'sleepy_face',
-      awakeFace: 'awake_face',
-      blankFace: 'blank_face',
-      semiAwakeFace: 'semi_awake_face',
-      smilyFace: 'smily_face',
-    };
     const option = FACE_API_TO_HA[face] ?? face;
 
-    this.hass.callService('select', 'select_option', {
+    this._callService('select', 'select_option', {
       entity_id: this._entities.face,
       option,
     });
-  }
-
-  /**
-   * Handle brightness slider input changes
-   * Provides immediate UI feedback without calling the service
-   * @param _e - The input event (unused)
-   */
-  private _handleSliderChange(_e: Event): void {
-    // Update UI immediately for smooth interaction
-    // Visual feedback only, don't call service yet
-    this.requestUpdate();
   }
 
   /**
@@ -767,13 +752,14 @@ export class RemiCard extends LitElement {
   private _handleSliderRelease(e: Event): void {
     // Call service when slider is released
     const target = e.target as HTMLInputElement;
-    const brightness = parseInt(target.value);
+    const brightness = parseInt(target.value, 10);
 
-    if (brightness === 0) {
-      this._handleLightControl(0);
-    } else {
-      this._handleLightControl(brightness);
+    // Ignore invalid values (NaN, out of range)
+    if (!Number.isFinite(brightness) || brightness < 0 || brightness > 100) {
+      return;
     }
+
+    this._handleLightControl(brightness);
   }
 
   /**
@@ -800,33 +786,36 @@ export class RemiCard extends LitElement {
     const lightState = this._getLightState();
     const tempState = this._getTemperatureState();
     const luminosityState = this._getLuminosityState();
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
-    // Convert HA snake_case face to API camelCase for icon and localization
+    // Convert HA snake_case face to API camelCase for localization only.
+    // getFaceIcon() expects snake_case keys (see face-images.ts FACE_ICONS).
     const faceState = faceStateHA ? (FACE_HA_TO_API[faceStateHA] ?? faceStateHA) : null;
 
     const deviceName = this._config.device_name || this._config.device_id;
-    const faceImage = faceState ? getFaceIcon(faceState) : getFaceIcon('blankFace');
+    const displayTitle = this._config.title ?? `${localizeCommon('remi', lang)} ${deviceName}`;
+    const faceImage = faceStateHA ? getFaceIcon(faceStateHA) : getFaceIcon('blankFace');
     const faceName = faceState ? localizeFace(faceState, lang) : localizeCommon('unknown', lang);
 
-    let statusText = '';
+    const parts: string[] = [];
     if (isAvailable(tempState)) {
-      statusText += `${formatNumber(stateNumber(tempState), 1, lang)}°C`;
+      parts.push(`${formatNumber(stateNumber(tempState), 1, lang)}°C`);
     }
     if (isAvailable(luminosityState)) {
-      statusText += ` • ${formatNumber(stateNumber(luminosityState), 0, lang)} lx`;
+      parts.push(`${formatNumber(stateNumber(luminosityState), 0, lang)} lx`);
     }
-    statusText += ` • ${faceName}`;
+    parts.push(faceName);
 
     if (lightState && isOn(lightState)) {
       const brightness = lightState.attributes.brightness;
       if (brightness !== undefined) {
         const percent = Math.round((brightness / 255) * 100);
-        statusText += ` • ${percent}%`;
+        parts.push(`${percent}%`);
       }
     } else {
-      statusText += ` • ${localizeCommon('off', lang)}`;
+      parts.push(localizeCommon('off', lang));
     }
+    const statusText = parts.join(' • ');
 
     const isLightOn = lightState?.state === 'on';
 
@@ -836,7 +825,7 @@ export class RemiCard extends LitElement {
           <img src="${faceImage}" alt="${faceName}" class="face-icon" />
         </div>
         <div class="info">
-          <div class="title">${localizeCommon('remi', lang)} ${deviceName}</div>
+          <div class="title">${displayTitle}</div>
           <div class="status">${statusText}</div>
         </div>
       </div>
@@ -850,7 +839,7 @@ export class RemiCard extends LitElement {
   private _renderLightControls(): TemplateResult {
     const lightState = this._getLightState();
     const isOn = lightState?.state === 'on';
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
     // Keep the brightness value even when light is off
     const currentBrightness = lightState?.attributes.brightness
       ? Math.round((lightState.attributes.brightness / 255) * 100)
@@ -873,7 +862,6 @@ export class RemiCard extends LitElement {
               min="0"
               max="100"
               .value=${currentBrightness.toString()}
-              @input=${(e: Event) => this._handleSliderChange(e)}
               @change=${(e: Event) => this._handleSliderRelease(e)}
               ?disabled=${!isOn}
             />
@@ -896,7 +884,7 @@ export class RemiCard extends LitElement {
     // camelCase to match FACE_STATES used for icons and labels
     const currentFaceHA = faceSelectEntity.state;
     const currentFace = FACE_HA_TO_API[currentFaceHA] ?? currentFaceHA;
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
     const faceOptions = FACE_STATES.map((face) => ({
       value: face,
@@ -932,48 +920,64 @@ export class RemiCard extends LitElement {
   private _renderDeviceSettings(): TemplateResult {
     const clockFormatState = this._getClockFormatState();
     const musicModeState = this._getMusicModeState();
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
     if (!clockFormatState && !musicModeState) return html``;
 
     return html`
       <div class="section">
         <div class="section-title">${localize('settings.title', lang)}</div>
-        ${clockFormatState
-          ? html`
-              <div class="select-control">
-                <label>${localize('clock_format.title', lang)}</label>
-                <select
-                  .value=${clockFormatState.state || ''}
-                  @change=${(e: Event) => {
-                    const target = e.target as HTMLSelectElement;
-                    this._handleSelectOption(this._entities.clock_format, target.value);
-                  }}
-                >
-                  <option value="12h">${localize('clock_format.12h', lang)}</option>
-                  <option value="24h">${localize('clock_format.24h', lang)}</option>
-                </select>
-              </div>
-            `
-          : ''}
-        ${musicModeState
-          ? html`
-              <div class="select-control">
-                <label>${localize('music_mode.title', lang)}</label>
-                <select
-                  .value=${musicModeState.state || ''}
-                  @change=${(e: Event) => {
-                    const target = e.target as HTMLSelectElement;
-                    this._handleSelectOption(this._entities.music_mode, target.value);
-                  }}
-                >
-                  <option value="off">${localize('music_mode.off', lang)}</option>
-                  <option value="music">${localize('music_mode.music', lang)}</option>
-                  <option value="white_noise">${localize('music_mode.white_noise', lang)}</option>
-                </select>
-              </div>
-            `
-          : ''}
+        ${this._renderSelectControl(
+          'clock_format.title',
+          clockFormatState,
+          this._entities.clock_format,
+          [
+            { value: '12h', labelKey: 'clock_format.12h' },
+            { value: '24h', labelKey: 'clock_format.24h' },
+          ],
+        )}
+        ${this._renderSelectControl(
+          'music_mode.title',
+          musicModeState,
+          this._entities.music_mode,
+          [
+            { value: 'off', labelKey: 'music_mode.off' },
+            { value: 'music', labelKey: 'music_mode.music' },
+            { value: 'white_noise', labelKey: 'music_mode.white_noise' },
+          ],
+        )}
+      </div>
+    `;
+  }
+
+  /**
+   * Render a select control (label + <select> with options).
+   * Factorise le template commun entre clock_format et music_mode.
+   */
+  private _renderSelectControl(
+    labelKey: string,
+    entity: SelectEntity | undefined,
+    entityId: string | undefined,
+    options: Array<{ value: string; labelKey: string }>,
+  ): TemplateResult | typeof nothing {
+    if (!entity) return html``;
+    const lang = getLanguage(this.hass);
+    return html`
+      <div class="select-control">
+        <label>${localize(labelKey, lang)}</label>
+        <select
+          .value=${entity.state || ''}
+          @change=${(e: Event) => {
+            const target = e.target as HTMLSelectElement;
+            this._handleSelectOption(entityId, target.value);
+          }}
+        >
+          ${options.map(
+            (opt) => html`
+              <option value=${opt.value}>${localize(opt.labelKey, lang)}</option>
+            `,
+          )}
+        </select>
       </div>
     `;
   }
@@ -987,7 +991,7 @@ export class RemiCard extends LitElement {
     const tempEntity = this._entities.temperature;
     if (!tempEntity) return html``;
 
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
     const tempState = this._getState(tempEntity);
 
     return html`
@@ -1012,7 +1016,7 @@ export class RemiCard extends LitElement {
     const firmwareState = this._getFirmwareVersionState();
 
     if (!connectivityState || connectivityState.state === 'unavailable') {
-      const lang = this._getLanguage();
+      const lang = getLanguage(this.hass);
       return html`
         <div class="section">
           <div class="connectivity">
@@ -1026,7 +1030,7 @@ export class RemiCard extends LitElement {
     }
 
     const isConnected = connectivityState.state === 'on';
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
     return html`
       <div class="section">
@@ -1069,7 +1073,7 @@ export class RemiCard extends LitElement {
     const volumeState = this._getVolumeControlState();
     const noiseState = this._getNoiseThresholdState();
     const nightFaceState = this._getNightFaceLevelState();
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
     const tiles: Array<TemplateResult> = [];
 
@@ -1155,7 +1159,7 @@ export class RemiCard extends LitElement {
     // Default to turning on when the current state is not yet known.
     const isCurrentlyOn = switchState?.state === 'on';
     const service = isCurrentlyOn ? 'turn_off' : 'turn_on';
-    this.hass.callService('switch', service, {
+    this._callService('switch', service, {
       entity_id: switchEntityId,
     });
   }
@@ -1191,7 +1195,7 @@ export class RemiCard extends LitElement {
     const enabled = formData.get('enabled') === 'on';
     const days = Array.from(formData.getAll('days')).map(Number);
 
-    this.hass.callService('urbanhello_remi', 'create_alarm', {
+    this._callService('urbanhello_remi', 'create_alarm', {
       time,
       name,
       enabled,
@@ -1210,7 +1214,7 @@ export class RemiCard extends LitElement {
    * @param alarmId - The alarm ID to trigger
    */
   private _handleTriggerAlarm(alarmId: string): void {
-    this.hass.callService('urbanhello_remi', 'trigger_alarm', {
+    this._callService('urbanhello_remi', 'trigger_alarm', {
       alarm_id: alarmId,
     }, {
       device_id: this._config.device_id,
@@ -1242,7 +1246,7 @@ export class RemiCard extends LitElement {
   private _handleDeleteAlarmConfirm(): void {
     if (!this._deleteAlarmId) return;
 
-    this.hass.callService('urbanhello_remi', 'delete_alarm', {
+    this._callService('urbanhello_remi', 'delete_alarm', {
       alarm_id: this._deleteAlarmId,
     }, {
       device_id: this._config.device_id,
@@ -1261,7 +1265,7 @@ export class RemiCard extends LitElement {
   private _handleUpdateAlarm(alarmId: string, updates: Record<string, unknown>): void {
     if (!alarmId) return;
 
-    this.hass.callService('urbanhello_remi', 'update_alarm', {
+    this._callService('urbanhello_remi', 'update_alarm', {
       alarm_id: alarmId,
       ...updates,
     }, {
@@ -1278,7 +1282,7 @@ export class RemiCard extends LitElement {
   private _handleSnoozeAlarm(alarmId: string, duration = 9): void {
     if (!alarmId) return;
 
-    this.hass.callService('urbanhello_remi', 'snooze_alarm', {
+    this._callService('urbanhello_remi', 'snooze_alarm', {
       alarm_id: alarmId,
       duration,
     }, {
@@ -1296,7 +1300,7 @@ export class RemiCard extends LitElement {
       return html``;
     }
 
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
     const alarmsCount = this._alarms.length;
 
     return html`
@@ -1405,7 +1409,7 @@ export class RemiCard extends LitElement {
                     ? html`
                         <div class="alarm-detail-item">
                           <ha-icon icon="mdi:emoticon"></ha-icon>
-                          <span>${localizeFace(face, lang)}</span>
+                          <span>${localizeFace(FACE_API_TO_HA[face] ?? face, lang)}</span>
                         </div>
                       `
                     : ''}
@@ -1436,20 +1440,41 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Render a modal dialog (backdrop + dialog + content + actions).
+   * Factorise la structure commune des modals (ajout / suppression alarme).
+   */
+  private _renderModal(
+    backdropClick: () => void,
+    title: string,
+    content: TemplateResult,
+    actions: TemplateResult,
+  ): TemplateResult {
+    return html`
+      <div class="modal-backdrop" @click=${backdropClick}></div>
+      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-content">
+          <h3>${title}</h3>
+          ${content}
+          ${actions}
+        </div>
+      </dialog>
+    `;
+  }
+
+  /**
    * Render the add alarm dialog
    * Opens a form to create a new alarm via the urbanhello_remi.create_alarm service
    * @returns Template result for the dialog, or empty if closed
    */
   private _renderAddAlarmDialog(): TemplateResult {
     if (!this._addAlarmDialog) return html``;
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
-    return html`
-      <div class="modal-backdrop" @click=${this._handleAddAlarmClose}></div>
-      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
-        <div class="modal-content">
-          <h3>${localize('alarm.add_alarm', lang)}</h3>
-          <form @submit=${this._handleAddAlarmSubmit}>
+    return this._renderModal(
+      this._handleAddAlarmClose,
+      localize('alarm.add_alarm', lang),
+      html`
+        <form @submit=${this._handleAddAlarmSubmit}>
             <div class="form-field">
               <label>${localize('alarm.new_alarm_name', lang)}</label>
               <input type="text" name="name" placeholder="${localize('alarm.new_alarm_name', lang)}" />
@@ -1482,9 +1507,16 @@ export class RemiCard extends LitElement {
               <button type="submit">${localize('alarm.add_alarm', lang)}</button>
             </div>
           </form>
+      `,
+      html`
+        <div class="form-actions">
+          <button type="button" @click=${this._handleAddAlarmClose}>
+            ${localize('alarm.confirm_delete_no', lang)}
+          </button>
+          <button type="submit">${localize('alarm.add_alarm', lang)}</button>
         </div>
-      </dialog>
-    `;
+      `,
+    );
   }
 
   /**
@@ -1494,27 +1526,27 @@ export class RemiCard extends LitElement {
    */
   private _renderDeleteConfirmationDialog(): TemplateResult {
     if (!this._deleteAlarmId) return html``;
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
-    return html`
-      <div class="modal-backdrop" @click=${this._handleDeleteAlarmCancel}></div>
-      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
-        <div class="modal-content">
-          <h3>${localize('alarm.delete_alarm', lang)}</h3>
-          <p>
-            ${localize('alarm.confirm_delete', lang)} "${this._deleteAlarmName}"?
-          </p>
-          <div class="form-actions">
-            <button type="button" @click=${this._handleDeleteAlarmCancel}>
-              ${localize('alarm.confirm_delete_no', lang)}
-            </button>
-            <button type="button" @click=${this._handleDeleteAlarmConfirm} class="delete">
-              ${localize('alarm.confirm_delete_yes', lang)}
-            </button>
-          </div>
+    return this._renderModal(
+      this._handleDeleteAlarmCancel,
+      localize('alarm.delete_alarm', lang),
+      html`
+        <p>
+          ${localize('alarm.confirm_delete', lang)} "${this._deleteAlarmName}"?
+        </p>
+      `,
+      html`
+        <div class="form-actions">
+          <button type="button" @click=${this._handleDeleteAlarmCancel}>
+            ${localize('alarm.confirm_delete_no', lang)}
+          </button>
+          <button type="button" @click=${this._handleDeleteAlarmConfirm} class="delete">
+            ${localize('alarm.confirm_delete_yes', lang)}
+          </button>
         </div>
-      </dialog>
-    `;
+      `,
+    );
   }
 
   /**
@@ -1532,7 +1564,7 @@ export class RemiCard extends LitElement {
     );
     const hasAlarms = this._alarms.length > 0;
     if (!hasAnyEntity && !hasAlarms) {
-      const lang = this._getLanguage();
+      const lang = getLanguage(this.hass);
       return html`
         <ha-card>
           <div class="error">
@@ -1545,6 +1577,14 @@ export class RemiCard extends LitElement {
 
     return html`
       <ha-card>
+        ${this._serviceError
+          ? html`
+              <div class="service-error">
+                <ha-icon icon="mdi:alert-circle"></ha-icon>
+                <span>${this._serviceError}</span>
+              </div>
+            `
+          : nothing}
         ${this._renderHeader()}
         ${this._sections.map((section) =>
           this._renderSection(section, this._renderSectionBody(section)),
@@ -2242,6 +2282,23 @@ export class RemiCard extends LitElement {
       .form-actions button.delete:hover {
         background: var(--error-color, #f44336);
         color: var(--card-background-color);
+      }
+
+      .service-error {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+        background: rgba(var(--rgb-error), 0.1);
+        border: 1px solid var(--error-color, #f44336);
+        border-radius: 8px;
+        color: var(--error-color, #f44336);
+        font-size: 0.9em;
+      }
+
+      .service-error ha-icon {
+        --mdc-icon-size: 20px;
       }
 
       .error {

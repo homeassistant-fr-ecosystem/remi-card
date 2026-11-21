@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant } from 'custom-card-helpers';
 import { localize } from './localize';
+import { getLanguage, t } from './i18n-helper';
 import { normalizeDeviceId } from './entities';
 import { RemiCardConfig, type SectionId } from './types';
 import { SECTION_IDS } from './remi-card';
@@ -32,14 +33,6 @@ export class RemiCardEditor extends LitElement {
 
   public setConfig(config: RemiCardConfig): void {
     this._config = config;
-  }
-
-  private _getLanguage(): string {
-    return this.hass?.locale?.language || this.hass?.language || 'en';
-  }
-
-  private _t(key: string): string {
-    return localize(key, this._getLanguage());
   }
 
   private _valueChanged(ev: CustomEvent): void {
@@ -145,12 +138,12 @@ export class RemiCardEditor extends LitElement {
       return nothing;
     }
     const options = this._anchorOptions;
-    const lang = this._getLanguage();
+    const lang = getLanguage(this.hass);
 
     return html`
       <div class="card-config">
         <div class="field">
-          <label class="title">${this._t('editor.anchor')}</label>
+          <label class="title">${t('editor.anchor', this.hass)}</label>
           <input
             type="text"
             list=${this._datalistId}
@@ -166,7 +159,7 @@ export class RemiCardEditor extends LitElement {
               (o) => html`<option value=${o.id}>${o.name}</option>`,
             )}
           </datalist>
-          <span class="hint">${this._t('editor.anchor_hint')}</span>
+          <span class="hint">${t('editor.anchor_hint', this.hass)}</span>
         </div>
 
         <div class="option">
@@ -197,7 +190,7 @@ export class RemiCardEditor extends LitElement {
         </div>
 
         <div class="field">
-          <label class="title">${this._t('editor.sections')}</label>
+          <label class="title">${t('editor.sections', this.hass)}</label>
           ${SECTION_IDS.map(
             (id) => html`<div class="checkbox-row">
               <input
@@ -210,13 +203,13 @@ export class RemiCardEditor extends LitElement {
                     (ev.target as HTMLInputElement).checked,
                   )}
               />
-              <label for=${`section-${id}`}>${this._t(SECTION_LABEL_KEYS[id])}</label>
+              <label for=${`section-${id}`}>${t(SECTION_LABEL_KEYS[id], this.hass)}</label>
             </div>`,
           )}
         </div>
 
         <div class="field">
-          <label class="title">${this._t('editor.expanded_sections')}</label>
+          <label class="title">${t('editor.expanded_sections', this.hass)}</label>
           ${SECTION_IDS.map(
             (id) => html`<div class="checkbox-row">
               <input
@@ -229,10 +222,10 @@ export class RemiCardEditor extends LitElement {
                     (ev.target as HTMLInputElement).checked,
                   )}
               />
-              <label for=${`expanded-${id}`}>${this._t(SECTION_LABEL_KEYS[id])}</label>
+              <label for=${`expanded-${id}`}>${t(SECTION_LABEL_KEYS[id], this.hass)}</label>
             </div>`,
           )}
-          <span class="hint">${this._t('editor.expanded_sections_hint')}</span>
+          <span class="hint">${t('editor.expanded_sections_hint', this.hass)}</span>
         </div>
 
         <div class="option">

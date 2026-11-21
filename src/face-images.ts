@@ -34,6 +34,30 @@ export const FACE_ICONS: Record<string, string> = {
 };
 
 /**
+ * Mapping of HA snake_case face state to API camelCase key.
+ * Used to convert the select entity state back to the card's face keys.
+ */
+export const FACE_HA_TO_API: Record<string, string> = {
+  sleepy_face: 'sleepyFace',
+  awake_face: 'awakeFace',
+  blank_face: 'blankFace',
+  semi_awake_face: 'semiAwakeFace',
+  smily_face: 'smilyFace',
+};
+
+/**
+ * Mapping of API camelCase face key to HA snake_case option.
+ * Used to send the selected face to the HA select entity.
+ */
+export const FACE_API_TO_HA: Record<string, string> = {
+  sleepyFace: 'sleepy_face',
+  awakeFace: 'awake_face',
+  blankFace: 'blank_face',
+  semiAwakeFace: 'semi_awake_face',
+  smilyFace: 'smily_face',
+};
+
+/**
  * Get the icon URL for a given face state
  * @param faceState - The face state identifier (e.g., 'sleepy_face', 'awake_face')
  * @returns The URL of the face icon image, defaults to blank face if state not found

@@ -94,6 +94,7 @@
     "section.temperature_graph": "Temperature graph",
     "section.connectivity": "Connectivity",
     "device_id": "Device ID (e.g., garance)",
+    "device_prefix": "Device Prefix (e.g. garance)",
     "device_name": "Device Name (optional)",
     "show_face_selector": "Show face selector",
     "show_controls": "Show light controls",

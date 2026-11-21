@@ -82,11 +82,16 @@ hours_to_show: 24
 | `type` | string | **Required** | `custom:remi-card` |
 | `device_id` | string | **Required** | Device ID suffix (e.g., `garance` for entities like `light.remi_garance_night_light`) |
 | `device_name` | string | `device_id` | Display name for the device |
+| `device_prefix` | string | `device_id` | Entity prefix used to discover device entities |
+| `title` | string | — | Custom card title shown in the header (defaults to "Rémi {device_name}") |
 | `show_face_selector` | boolean | `true` | Show face selection buttons (5 faces) |
 | `show_controls` | boolean | `true` | Show light control buttons |
 | `show_temperature_graph` | boolean | `true` | Show temperature section |
 | `show_connectivity` | boolean | `true` | Show WiFi connectivity status |
+| `show_alarm_clocks` | boolean | `true` | Show alarm clocks section |
 | `hours_to_show` | number | `24` | Hours to show in temperature graph label |
+| `sections` | SectionId[] | all | List of sections to display (face_selector, light_controls, alarms, device_settings, device_info, temperature_graph, connectivity) |
+| `expanded_sections` | SectionId[] | all | List of sections expanded by default |
 
 ### ⚠️ Connectivity and RSSI
 
@@ -101,6 +106,26 @@ To enable them:
 5. Refresh the dashboard
 
 Once enabled, the card will show the WiFi connection status and signal strength.
+
+### Collapsible sections
+
+All sections are collapsible. Click a section header to expand or collapse it.
+Collapsed sections show a summary (e.g. brightness %, current temperature, connectivity status).
+Use `expanded_sections` to control which sections start expanded, and `sections` to choose which sections are displayed at all.
+
+### Alarm clocks
+
+If your Rémi device has configured alarms, they appear in the **Alarm clocks** section.
+From there you can:
+
+- Enable / disable each alarm
+- Test (trigger) an alarm
+- Snooze an active alarm
+- Edit an alarm (toggle enabled)
+- Delete an alarm
+- Add a new alarm (via the "+" button)
+
+Alarm management calls the `urbanhello_remi` services (`create_alarm`, `update_alarm`, `delete_alarm`, `trigger_alarm`, `snooze_alarm`).
 
 ## Required Entities
 
