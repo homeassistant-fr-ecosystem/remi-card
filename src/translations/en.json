@@ -81,7 +81,7 @@
   },
   "editor": {
     "anchor": "Device entity",
-    "anchor_hint": "Pick a Rémi entity (e.g. light.garance_night_light). The card finds the other entities of the same device.",
+    "anchor_hint": "Pick a Rémi entity (e.g. light.garance_night_light) or enter the device id (e.g. garance). The card finds the other entities of the same device.",
     "title": "Card title (optional)",
     "sections": "Sections to display",
     "expanded_sections": "Sections expanded by default",

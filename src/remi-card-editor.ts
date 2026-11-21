@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant } from 'custom-card-helpers';
 import { localize } from './localize';
+import { normalizeDeviceId } from './entities';
 import { RemiCardConfig, type SectionId } from './types';
 import { SECTION_IDS } from './remi-card';
 
@@ -157,7 +158,7 @@ export class RemiCardEditor extends LitElement {
             placeholder="garance"
             @change=${(ev: Event) =>
               this._update({
-                device_id: (ev.target as HTMLInputElement).value || undefined,
+                device_id: normalizeDeviceId((ev.target as HTMLInputElement).value) || undefined,
               })}
           />
           <datalist id=${this._datalistId}>

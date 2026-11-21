@@ -65,15 +65,31 @@ export function slugify(name: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
-/** Build the base entity slug from config (device_prefix > device_name > device_id). */
+/** Extract the object_id portion of a device identifier.
+ *
+ * Accepts either a bare slug (`garance`) or a full entity_id
+ * (`device_tracker.remi_garance`, `light.garance_night_light`) and returns the
+ * part after the first dot. A value without a dot is returned unchanged.
+ */
+export function objectIdOf(value: string): string {
+  return value.includes('.') ? value.split('.').slice(1).join('.') : value;
+}
+
+/** Normalize a user-entered device identifier to a bare slug. */
+export function normalizeDeviceId(value: string): string {
+  return slugify(objectIdOf(value));
+}
+
+/** Build the base entity slug from config (device_prefix > device_name > device_id).
+ * A full entity_id (e.g. `device_tracker.remi_garance`) is accepted and reduced
+ * to its object_id (`remi_garance`) before slugification. */
 export function configBase(config: RemiCardConfig): string {
-  if (config.device_prefix) {
-    return slugify(config.device_prefix);
-  }
-  if (config.device_name) {
-    return slugify(config.device_name);
-  }
-  return config.device_id;
+  const raw =
+    config.device_prefix ??
+    config.device_name ??
+    config.device_id ??
+    '';
+  return normalizeDeviceId(raw);
 }
 
 /** Candidate entity ids belonging to the same device, or to the integration. */
