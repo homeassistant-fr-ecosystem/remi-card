@@ -3,28 +3,25 @@
  * Provides controls for face selection, night light, temperature monitoring, and connectivity status
  */
 
-import { LitElement, html, css, PropertyValues, TemplateResult } from 'lit';
+import { LitElement, html, css, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
 import { getFaceIcon, FACE_STATES } from './face-images';
 import { localize, localizeFace, localizeCommon } from './localize';
 import { RemiCardConfig } from './types';
-
-/**
- * Base interface for Home Assistant entity state
- */
-interface HassEntity {
-  entity_id: string;
-  state: string;
-  attributes: Record<string, unknown>;
-  last_changed: string;
-  last_updated: string;
-  context: {
-    id: string;
-    parent_id: string | null;
-    user_id: string | null;
-  };
-}
+import {
+  discoverEntities,
+  discoverAlarms,
+  alarmSwitchEntityId,
+  type DiscoveredEntities,
+} from './entities';
+import {
+  formatNumber,
+  isAvailable,
+  isOn,
+  stateNumber,
+  type HassEntity,
+} from './format';
 
 /**
  * Light entity state with brightness attribute
@@ -92,28 +89,6 @@ interface TimeEntity extends HassEntity {
 }
 
 /**
- * Configuration interface for the Rémi Card
- * Defined in src/types.ts (shared with the editor) and imported above.
- */
-
-/**
- * Entity identifiers for Rémi device sensors and controls
- */
-interface RemiEntity {
-  face: string | null;
-  faceSelect: string | null;
-  light: string | null;
-  temperature: string | null;
-  connectivity: string | null;
-  rssi: string | null;
-  alarms: string[];
-  luminosity: string | null;
-  firmwareVersion: string | null;
-  clockFormat: string | null;
-  musicMode: string | null;
-}
-
-/**
  * Custom event detail for hass-more-info
  */
 interface HassMoreInfoDetail {
@@ -129,6 +104,10 @@ interface CustomCardEntry {
   description: string;
   preview: boolean;
   documentationURL: string;
+  getEntitySuggestion?: (
+    hass: HomeAssistant,
+    entityId: string,
+  ) => { config: Record<string, unknown> } | null;
 }
 
 declare global {
@@ -156,19 +135,8 @@ const FACE_HA_TO_API: Record<string, string> = {
 export class RemiCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private _config!: RemiCardConfig;
-  @state() private _entities: RemiEntity = {
-    face: null,
-    faceSelect: null,
-    light: null,
-    temperature: null,
-    connectivity: null,
-    rssi: null,
-    alarms: [],
-    luminosity: null,
-    firmwareVersion: null,
-    clockFormat: null,
-    musicMode: null,
-  };
+  @state() private _entities: DiscoveredEntities = {};
+  @state() private _alarms: string[] = [];
   @state() private _alarmsExpanded = false;
   @state() private _addAlarmDialog = false;
   @state() private _deleteAlarmId: string | null = null;
@@ -224,7 +192,7 @@ export class RemiCard extends LitElement {
       ...config,
     };
 
-    this._updateEntities();
+    this._refreshEntities();
   }
 
   /**
@@ -259,9 +227,9 @@ export class RemiCard extends LitElement {
         (e): e is string => e !== null,
       );
 
-      for (const alarmId of this._entities.alarms) {
-        const name = alarmId.replace('time.', '').replace('_time', '');
-        watchedEntities.push(`switch.${name}`);
+      for (const alarmId of this._alarms) {
+        const switchId = alarmSwitchEntityId(alarmId);
+        watchedEntities.push(switchId);
       }
 
       return watchedEntities.some((entityId) => {
@@ -280,8 +248,25 @@ export class RemiCard extends LitElement {
   protected override updated(changedProps: PropertyValues): void {
     super.updated(changedProps);
     if (changedProps.has('hass') || changedProps.has('_config')) {
-      this._updateEntities();
+      this._refreshEntities();
     }
+  }
+
+  /**
+   * Update entity references based on config and hass state.
+   * Uses translation-key-based discovery (stable across renames) with
+   * entity-id suffix fallback, then alarm entities by prefix.
+   */
+  private _refreshEntities(): void {
+    if (!this.hass || !this._config) return;
+
+    const base = this._slugify(
+      this._config.device_prefix ??
+      this._config.device_name ??
+      this._config.device_id,
+    );
+    this._entities = discoverEntities(this.hass, this._config);
+    this._alarms = discoverAlarms(this.hass, base);
   }
 
   /**
@@ -299,55 +284,11 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Update entity identifiers based on the device name
-   * Constructs entity IDs for all Rémi device sensors and controls.
-   *
-   * The integration generates entity_ids from the device name slugified
-   * (e.g. ``select.baby_room_face``), not from the device id. We therefore
-   * derive the entity base from ``device_name`` (falling back to ``device_id``).
-   */
-  private _updateEntities(): void {
-    if (!this.hass || !this._config) return;
-
-    const deviceId = this._config.device_id;
-
-    const base = this._config.device_prefix
-      ? this._slugify(this._config.device_prefix)
-      : this._config.device_name
-        ? this._slugify(this._config.device_name)
-        : deviceId;
-
-    // Find all alarm time entities for this device.
-    // The integration exposes them as ``time.<device_name_slug>_<alarm_name_slug>``
-    // (e.g. ``time.garance_week_night``), without a ``remi_`` prefix or ``_time``
-    // suffix. We therefore match on the device name slug only, consistently
-    // with the other entities (face, light, temperature, etc.).
-    const alarmEntities = Object.keys(this.hass.states)
-      .filter(entityId => entityId.startsWith(`time.${base}_`));
-
-    // The face is exposed by the integration via a select entity, not a
-    // dedicated sensor, so there is no ``sensor.*_face`` to read.
-    this._entities = {
-      face: null,
-      faceSelect: `select.${base}_face`,
-      light: `light.${base}_night_light`,
-      temperature: `sensor.${base}_temperature`,
-      connectivity: `binary_sensor.${base}_connectivity`,
-      rssi: `sensor.${base}_rssi`,
-      alarms: alarmEntities,
-      luminosity: `sensor.${base}_luminosity`,
-      firmwareVersion: `sensor.${base}_firmware_version`,
-      clockFormat: `select.${base}_clock_format`,
-      musicMode: `select.${base}_music_mode`,
-    };
-  }
-
-  /**
    * Get the state object for an entity
    * @param entityId - The entity ID to retrieve
    * @returns The entity state object or undefined if not found
    */
-  private _getState(entityId: string | null): HassEntity | undefined {
+  private _getState(entityId: string | null | undefined): HassEntity | undefined {
     if (!entityId || !this.hass) return undefined;
     return this.hass.states[entityId] as HassEntity | undefined;
   }
@@ -359,7 +300,7 @@ export class RemiCard extends LitElement {
    * @returns The face state in snake_case (e.g. 'sleepy_face') or null if unavailable
    */
   private _getFaceState(): string | null {
-    const faceSelectEntity = this._getState(this._entities.faceSelect) as SelectEntity | undefined;
+    const faceSelectEntity = this._getState(this._entities.face) as SelectEntity | undefined;
     if (!faceSelectEntity || faceSelectEntity.state === 'unavailable') return null;
     return faceSelectEntity.state;
   }
@@ -369,7 +310,7 @@ export class RemiCard extends LitElement {
    * @returns The light entity state object or undefined if not found
    */
   private _getLightState(): LightEntity | undefined {
-    return this._getState(this._entities.light) as LightEntity | undefined;
+    return this._getState(this._entities.night_light) as LightEntity | undefined;
   }
 
   /**
@@ -385,7 +326,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getFaceSelectState(): SelectEntity | undefined {
-    return this._getState(this._entities.faceSelect) as SelectEntity | undefined;
+    return this._getState(this._entities.face) as SelectEntity | undefined;
   }
 
   /**
@@ -417,7 +358,31 @@ export class RemiCard extends LitElement {
    * @returns The sensor entity state object or undefined if not found
    */
   private _getFirmwareVersionState(): SensorEntity | undefined {
-    return this._getState(this._entities.firmwareVersion) as SensorEntity | undefined;
+    return this._getState(this._entities.firmware_version) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the IP address sensor state
+   * @returns The sensor entity state object or undefined if not found
+   */
+  private _getIpAddressState(): SensorEntity | undefined {
+    return this._getState(this._entities.ip_address) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the alive binary sensor state
+   * @returns The binary sensor entity state object or undefined if not found
+   */
+  private _getAliveState(): BinarySensorEntity | undefined {
+    return this._getState(this._entities.alive) as BinarySensorEntity | undefined;
+  }
+
+  /**
+   * Get the firmware update binary sensor state
+   * @returns The binary sensor entity state object or undefined if not found
+   */
+  private _getFirmwareUpdateState(): BinarySensorEntity | undefined {
+    return this._getState(this._entities.firmware_update) as BinarySensorEntity | undefined;
   }
 
   /**
@@ -425,7 +390,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getClockFormatState(): SelectEntity | undefined {
-    return this._getState(this._entities.clockFormat) as SelectEntity | undefined;
+    return this._getState(this._entities.clock_format) as SelectEntity | undefined;
   }
 
   /**
@@ -433,7 +398,31 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getMusicModeState(): SelectEntity | undefined {
-    return this._getState(this._entities.musicMode) as SelectEntity | undefined;
+    return this._getState(this._entities.music_mode) as SelectEntity | undefined;
+  }
+
+  /**
+   * Get the volume control number state
+   * @returns The number entity state object or undefined if not found
+   */
+  private _getVolumeControlState(): SensorEntity | undefined {
+    return this._getState(this._entities.volume_control) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the noise threshold number state
+   * @returns The number entity state object or undefined if not found
+   */
+  private _getNoiseThresholdState(): SensorEntity | undefined {
+    return this._getState(this._entities.noise_threshold) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the night face level number state
+   * @returns The number entity state object or undefined if not found
+   */
+  private _getNightFaceLevelState(): SensorEntity | undefined {
+    return this._getState(this._entities.night_face_level) as SensorEntity | undefined;
   }
 
   /**
@@ -441,7 +430,7 @@ export class RemiCard extends LitElement {
    * @param entityId - The select entity ID
    * @param option - The option to select
    */
-  private _handleSelectOption(entityId: string | null, option: string): void {
+  private _handleSelectOption(entityId: string | null | undefined, option: string): void {
     if (!entityId) return;
     this.hass.callService('select', 'select_option', {
       entity_id: entityId,
@@ -463,15 +452,15 @@ export class RemiCard extends LitElement {
    * @param brightness - Brightness percentage (0-100), 0 turns off the light
    */
   private _handleLightControl(brightness: number): void {
-    if (!this._entities.light) return;
+    if (!this._entities.night_light) return;
 
     if (brightness === 0) {
       this.hass.callService('light', 'turn_off', {
-        entity_id: this._entities.light,
+        entity_id: this._entities.night_light,
       });
     } else {
       this.hass.callService('light', 'turn_on', {
-        entity_id: this._entities.light,
+        entity_id: this._entities.night_light,
         brightness_pct: brightness,
       });
     }
@@ -482,7 +471,7 @@ export class RemiCard extends LitElement {
    * @param face - The face state to select (e.g., 'sleepyFace', 'awakeFace')
    */
   private _handleFaceSelect(face: string): void {
-    if (!this._entities.faceSelect) return;
+    if (!this._entities.face) return;
 
     // HA select entity expects snake_case options, API uses camelCase
     const FACE_API_TO_HA: Record<string, string> = {
@@ -495,7 +484,7 @@ export class RemiCard extends LitElement {
     const option = FACE_API_TO_HA[face] ?? face;
 
     this.hass.callService('select', 'select_option', {
-      entity_id: this._entities.faceSelect,
+      entity_id: this._entities.face,
       option,
     });
   }
@@ -562,15 +551,15 @@ export class RemiCard extends LitElement {
     const faceName = faceState ? localizeFace(faceState, lang) : localizeCommon('unknown', lang);
 
     let statusText = '';
-    if (tempState && tempState.state !== 'unavailable') {
-      statusText += `${tempState.state}°C`;
+    if (isAvailable(tempState)) {
+      statusText += `${formatNumber(stateNumber(tempState), 1, lang)}°C`;
     }
-    if (luminosityState && luminosityState.state !== 'unavailable') {
-      statusText += ` • ${luminosityState.state} lx`;
+    if (isAvailable(luminosityState)) {
+      statusText += ` • ${formatNumber(stateNumber(luminosityState), 0, lang)} lx`;
     }
     statusText += ` • ${faceName}`;
 
-    if (lightState?.state === 'on') {
+    if (lightState && isOn(lightState)) {
       const brightness = lightState.attributes.brightness;
       if (brightness !== undefined) {
         const percent = Math.round((brightness / 255) * 100);
@@ -699,7 +688,7 @@ export class RemiCard extends LitElement {
                   .value=${clockFormatState.state || ''}
                   @change=${(e: Event) => {
                     const target = e.target as HTMLSelectElement;
-                    this._handleSelectOption(this._entities.clockFormat, target.value);
+                    this._handleSelectOption(this._entities.clock_format, target.value);
                   }}
                 >
                   <option value="12h">${localize('clock_format.12h', lang)}</option>
@@ -716,7 +705,7 @@ export class RemiCard extends LitElement {
                   .value=${musicModeState.state || ''}
                   @change=${(e: Event) => {
                     const target = e.target as HTMLSelectElement;
-                    this._handleSelectOption(this._entities.musicMode, target.value);
+                    this._handleSelectOption(this._entities.music_mode, target.value);
                   }}
                 >
                   <option value="off">${localize('music_mode.off', lang)}</option>
@@ -803,6 +792,86 @@ export class RemiCard extends LitElement {
                 </div>
               `
             : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render the device info section
+   * Shows IP address, alive status, firmware update, volume, noise threshold,
+   * and night face level when available.
+   * @returns Template result for the device info section
+   */
+  private _renderDeviceInfo(): TemplateResult {
+    const ipState = this._getIpAddressState();
+    const aliveState = this._getAliveState();
+    const fwUpdateState = this._getFirmwareUpdateState();
+    const volumeState = this._getVolumeControlState();
+    const noiseState = this._getNoiseThresholdState();
+    const nightFaceState = this._getNightFaceLevelState();
+    const lang = this._getLanguage();
+
+    const tiles: Array<TemplateResult> = [];
+
+    if (isAvailable(ipState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:ip-network"></ha-icon>
+          <span>${ipState!.state}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(aliveState)) {
+      tiles.push(html`
+        <div class="connectivity-item ${isOn(aliveState) ? 'connected' : 'disconnected'}">
+          <ha-icon icon="${isOn(aliveState) ? 'mdi:lan-connect' : 'mdi:lan-disconnect'}"></ha-icon>
+          <span>${localizeCommon(isOn(aliveState) ? 'on' : 'off', lang)}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(fwUpdateState)) {
+      tiles.push(html`
+        <div class="connectivity-item ${isOn(fwUpdateState) ? 'alarm' : 'connected'}">
+          <ha-icon icon="${isOn(fwUpdateState) ? 'mdi:alert' : 'mdi:check'}"></ha-icon>
+          <span>${localize(isOn(fwUpdateState) ? 'firmware.update_available' : 'firmware.up_to_date', lang)}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(volumeState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:volume-high"></ha-icon>
+          <span>${formatNumber(stateNumber(volumeState), 0, lang)}%</span>
+        </div>
+      `);
+    }
+    if (isAvailable(noiseState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:bell"></ha-icon>
+          <span>${formatNumber(stateNumber(noiseState), 0, lang)}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(nightFaceState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:brightness-6"></ha-icon>
+          <span>${formatNumber(stateNumber(nightFaceState), 0, lang)}%</span>
+        </div>
+      `);
+    }
+
+    if (tiles.length === 0) {
+      return html``;
+    }
+
+    return html`
+      <div class="section">
+        <div class="section-title">${localize('device_info.title', lang)}</div>
+        <div class="connectivity">
+          ${tiles}
         </div>
       </div>
     `;
@@ -925,17 +994,51 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Update an existing alarm
+   * Calls the urbanhello_remi.update_alarm service
+   * @param alarmId - The alarm ID to update
+   * @param updates - Fields to update (time, enabled, name, days, face, brightness)
+   */
+  private _handleUpdateAlarm(alarmId: string, updates: Record<string, unknown>): void {
+    if (!alarmId) return;
+
+    this.hass.callService('urbanhello_remi', 'update_alarm', {
+      alarm_id: alarmId,
+      ...updates,
+    }, {
+      device_id: this._config.device_id,
+    });
+  }
+
+  /**
+   * Snooze a currently active alarm
+   * Calls the urbanhello_remi.snooze_alarm service
+   * @param alarmId - The alarm ID to snooze
+   * @param duration - Snooze duration in minutes (1-60)
+   */
+  private _handleSnoozeAlarm(alarmId: string, duration = 9): void {
+    if (!alarmId) return;
+
+    this.hass.callService('urbanhello_remi', 'snooze_alarm', {
+      alarm_id: alarmId,
+      duration,
+    }, {
+      device_id: this._config.device_id,
+    });
+  }
+
+  /**
    * Render the alarm clocks section
    * Shows all configured alarm clocks for this device
    * @returns Template result for the alarm clocks section
    */
   private _renderAlarmClocks(): TemplateResult {
-    if (!this._entities.alarms || this._entities.alarms.length === 0) {
+    if (!this._alarms || this._alarms.length === 0) {
       return html``;
     }
 
     const lang = this._getLanguage();
-    const alarmsCount = this._entities.alarms.length;
+    const alarmsCount = this._alarms.length;
 
     return html`
       <div class="section">
@@ -953,16 +1056,13 @@ export class RemiCard extends LitElement {
         </div>
         ${this._alarmsExpanded ? html`
         <div class="alarms-container">
-          ${this._entities.alarms.map((alarmId) => {
+          ${this._alarms.map((alarmId) => {
             const alarmState = this._getState(alarmId) as TimeEntity | undefined;
             if (!alarmState || alarmState.state === 'unavailable') {
               return html``;
             }
 
-            // Extract alarm name from entity ID
-            // time.garance_week_night_time -> garance_week_night -> switch.garance_week_night
-            const alarmEntityName = alarmId.replace('time.', '').replace('_time', '');
-            const switchEntityId = `switch.${alarmEntityName}`;
+            const switchEntityId = alarmSwitchEntityId(alarmId);
             const switchState = this._getState(switchEntityId);
             const isAlarmEnabled = switchState?.state === 'on';
 
@@ -999,6 +1099,24 @@ export class RemiCard extends LitElement {
                         this._handleTriggerAlarm(alarmId);
                       }}
                       title="${localize('alarm.trigger_alarm', lang)}"
+                    ></ha-icon-button>
+                    ${isAlarmEnabled
+                      ? html`<ha-icon-button
+                          icon="mdi:pause"
+                          @click=${(e: Event) => {
+                            e.stopPropagation();
+                            this._handleSnoozeAlarm(alarmId);
+                          }}
+                          title="${localize('alarm.snooze_alarm', lang)}"
+                        ></ha-icon-button>`
+                      : nothing}
+                    <ha-icon-button
+                      icon="mdi:pencil"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this._handleUpdateAlarm(alarmId, { enabled: !isAlarmEnabled });
+                      }}
+                      title="${localize('alarm.update_alarm', lang)}"
                     ></ha-icon-button>
                     <ha-icon-button
                       icon="mdi:delete-outline"
@@ -1150,6 +1268,22 @@ export class RemiCard extends LitElement {
       return html``;
     }
 
+    const hasAnyEntity = Object.values(this._entities).some(
+      (v): v is string => v !== undefined,
+    );
+    const hasAlarms = this._alarms.length > 0;
+    if (!hasAnyEntity && !hasAlarms) {
+      const lang = this._getLanguage();
+      return html`
+        <ha-card>
+          <div class="error">
+            <ha-icon icon="mdi:alert-outline"></ha-icon>
+            <div>${localize('error.no_entities', lang)}</div>
+          </div>
+        </ha-card>
+      `;
+    }
+
     return html`
       <ha-card>
         ${this._renderHeader()}
@@ -1157,6 +1291,7 @@ export class RemiCard extends LitElement {
         ${this._config.show_controls ? this._renderLightControls() : ''}
         ${this._config.show_alarm_clocks ? this._renderAlarmClocks() : ''}
         ${this._config.show_controls ? this._renderDeviceSettings() : ''}
+        ${this._renderDeviceInfo()}
         ${this._config.show_temperature_graph ? this._renderTemperatureGraph() : ''}
         ${this._config.show_connectivity ? this._renderConnectivity() : ''}
         ${this._renderAddAlarmDialog()}
@@ -1787,6 +1922,21 @@ export class RemiCard extends LitElement {
         background: var(--error-color, #f44336);
         color: var(--card-background-color);
       }
+
+      .error {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 24px;
+        text-align: center;
+        color: var(--secondary-text-color);
+      }
+
+      .error ha-icon {
+        --mdc-icon-size: 48px;
+        color: var(--error-color, #f44336);
+      }
     `;
   }
 }
@@ -1804,5 +1954,29 @@ window.customCards.push({
   name: 'Rémi Card',
   description: 'A card for displaying and controlling Rémi UrbanHello baby sleep trainer devices',
   preview: false,
-  documentationURL: 'https://github.com/yourusername/remi-card',
+  documentationURL: 'https://github.com/homeassistant-fr-ecosystem/remi-card',
+  getEntitySuggestion: (hass: HomeAssistant, entityId: string) => {
+    if (!hass?.entities?.[entityId]) {
+      return null;
+    }
+    const platform = hass.entities[entityId].platform;
+    if (platform !== 'urbanhello_remi') {
+      return null;
+    }
+    // Suggest the card for the main device entities.
+    const prefixes = ['select.', 'light.', 'sensor.', 'binary_sensor.', 'time.'];
+    if (!prefixes.some((p) => entityId.startsWith(p))) {
+      return null;
+    }
+    return { config: { type: 'custom:remi-card', device_id: entityId.split('.')[1] } };
+  },
 });
+
+// Version banner: makes it obvious in the browser console which build is loaded
+// when a user reports an issue.
+// eslint-disable-next-line no-console
+console.info(
+  `%c REMI-CARD %c v1.0.0 `,
+  'color:#fff;background:#ff6d00;font-weight:700;border-radius:4px 0 0 4px;',
+  'color:#ff6d00;background:transparent;font-weight:700;border-radius:0 4px 4px 0;',
+);

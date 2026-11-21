@@ -20,7 +20,12 @@
     "not_available": "Connectivity not available. Enable the connectivity entity in the integration settings."
   },
   "firmware": {
-    "version": "Firmware version"
+    "version": "Firmware version",
+    "update_available": "Update available",
+    "up_to_date": "Up to date"
+  },
+  "device_info": {
+    "title": "Device info"
   },
   "settings": {
     "title": "Device settings"
@@ -46,6 +51,8 @@
     "add_alarm": "Add Alarm",
     "delete_alarm": "Delete Alarm",
     "trigger_alarm": "Test Alarm",
+    "update_alarm": "Update Alarm",
+    "snooze_alarm": "Snooze Alarm",
     "time": "Time",
     "enabled": "Enabled",
     "confirm_delete": "Are you sure you want to delete this alarm?",
@@ -62,6 +69,9 @@
       "5": "Sat",
       "6": "Sun"
     }
+  },
+  "error": {
+    "no_entities": "No Rémi entities found. Check the device configuration."
   },
   "editor": {
     "device_id": "Device ID (e.g., garance)",
