@@ -8,7 +8,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
 import { getFaceIcon, FACE_STATES } from './face-images';
 import { localize, localizeFace, localizeCommon } from './localize';
-import { RemiCardConfig } from './types';
+import { RemiCardConfig, type SectionId } from './types';
 import {
   discoverEntities,
   discoverAlarms,
@@ -128,6 +128,45 @@ const FACE_HA_TO_API: Record<string, string> = {
   smily_face: 'smilyFace',
 };
 
+/** Collapsible section identifiers. `status` (header) is always visible. */
+export const SECTION_IDS = [
+  'face_selector',
+  'light_controls',
+  'alarms',
+  'device_settings',
+  'device_info',
+  'temperature_graph',
+  'connectivity',
+] as const;
+
+/** Sections expanded by default when the config does not set `expanded_sections`. */
+export const DEFAULT_EXPANDED_SECTIONS: readonly SectionId[] = [
+  'face_selector',
+  'light_controls',
+  'alarms',
+  'device_settings',
+  'device_info',
+  'temperature_graph',
+  'connectivity',
+];
+
+/** Section titles, used by the collapsible headers. */
+const SECTION_TITLE_KEYS: Record<SectionId, string> = {
+  face_selector: 'face_selector.title',
+  light_controls: 'light_controls.title',
+  alarms: 'alarm.title',
+  device_settings: 'settings.title',
+  device_info: 'device_info.title',
+  temperature_graph: 'temperature.title',
+  connectivity: 'connectivity.title',
+};
+
+/** Section summary shown in the header while collapsed. */
+interface SectionSummary {
+  text: string;
+  entityId?: string;
+}
+
 /**
  * Custom Lovelace card for Rémi UrbanHello devices
  */
@@ -141,6 +180,14 @@ export class RemiCard extends LitElement {
   @state() private _addAlarmDialog = false;
   @state() private _deleteAlarmId: string | null = null;
   @state() private _deleteAlarmName = '';
+
+  /** User toggles on the collapsible section headers: `true` = expanded. */
+  @state() private _sectionOverrides = new Map<string, boolean>();
+
+  private _unsubscribe?: () => void;
+
+  /** Entity states pushed by the `states` context; falls back to `hass.states`. */
+  @state() private _states?: HomeAssistant['states'];
 
   /**
    * Get a default stub configuration for the card
@@ -203,6 +250,43 @@ export class RemiCard extends LitElement {
     return 5;
   }
 
+  public override connectedCallback(): void {
+    super.connectedCallback();
+    this._requestStatesContext();
+  }
+
+  public override disconnectedCallback(): void {
+    this._unsubscribe?.();
+    this._unsubscribe = undefined;
+    super.disconnectedCallback();
+  }
+
+  /**
+   * Ask for the `states` context so Home Assistant pushes state changes
+   * without us re-rendering on every unrelated change of the `hass` object.
+   * If no provider answers (older frontend), we keep using `hass.states`.
+   */
+  private _requestStatesContext(): void {
+    const event = new CustomEvent('context-request', {
+      bubbles: true,
+      composed: true,
+    }) as CustomEvent & {
+      context?: unknown;
+      subscribe?: boolean;
+      callback?: (
+        states: HomeAssistant['states'],
+        unsubscribe: () => void,
+      ) => void;
+    };
+    event.context = 'states';
+    event.subscribe = true;
+    event.callback = (states, unsubscribe) => {
+      this._unsubscribe = unsubscribe;
+      this._states = states;
+    };
+    this.dispatchEvent(event);
+  }
+
   /**
    * Determine if the card should update based on changed properties
    * Optimizes rendering by only updating when relevant entities change
@@ -210,34 +294,29 @@ export class RemiCard extends LitElement {
    * @returns True if the card should re-render
    */
   protected override shouldUpdate(changedProps: PropertyValues): boolean {
-    if (changedProps.has('_config')) {
+    if (changedProps.has('_config') || changedProps.has('_sectionOverrides')) {
       return true;
     }
-
-    if (changedProps.has('hass')) {
-      const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
-      if (!oldHass || !this._entities) {
-        return true;
-      }
-
-      // Check if any of our entities changed, including the derived switch
-      // entities for each alarm. Without the switches here, a state change on
-      // an alarm switch would not trigger a re-render.
-      const watchedEntities = Object.values(this._entities).filter(
-        (e): e is string => e !== null,
-      );
-
-      for (const alarmId of this._alarms) {
-        const switchId = alarmSwitchEntityId(alarmId);
-        watchedEntities.push(switchId);
-      }
-
-      return watchedEntities.some((entityId) => {
-        return oldHass.states[entityId] !== this.hass.states[entityId];
-      });
+    if (!this.hass) {
+      return false;
     }
-
-    return true;
+    // No context provider answered: fall back to the normal hass-driven updates.
+    if (!this._states) {
+      return changedProps.has('hass') || changedProps.has('_states');
+    }
+    const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
+    // Check if any of our watched entities changed via the pushed states context.
+    const watchedEntities = Object.values(this._entities).filter(
+      (e): e is string => e !== null,
+    );
+    for (const alarmId of this._alarms) {
+      const switchId = alarmSwitchEntityId(alarmId);
+      watchedEntities.push(switchId);
+    }
+    return watchedEntities.some((entityId) => {
+      const oldState = oldHass ? oldHass.states[entityId] : undefined;
+      return oldState !== this._states?.[entityId];
+    });
   }
 
   /**
@@ -249,6 +328,13 @@ export class RemiCard extends LitElement {
     super.updated(changedProps);
     if (changedProps.has('hass') || changedProps.has('_config')) {
       this._refreshEntities();
+    }
+    if (changedProps.has('hass')) {
+      const newHass = changedProps.get('hass') as HomeAssistant | undefined;
+      if (newHass && newHass.locale !== this.hass.locale) {
+        // Language changed: refresh localized strings.
+        this.requestUpdate();
+      }
     }
   }
 
@@ -267,6 +353,178 @@ export class RemiCard extends LitElement {
     );
     this._entities = discoverEntities(this.hass, this._config);
     this._alarms = discoverAlarms(this.hass, base);
+  }
+
+  /** Sections to render, from config or defaults. */
+  private get _sections(): SectionId[] {
+    const configured = this._config.sections;
+    if (configured && configured.length) {
+      return configured.filter((s) => SECTION_IDS.includes(s));
+    }
+    return [...SECTION_IDS];
+  }
+
+  /** Sections that start expanded; the others start collapsed. */
+  private get _expandedDefaults(): SectionId[] {
+    const configured = this._config.expanded_sections;
+    if (configured && configured.length) {
+      return configured.filter((s) => SECTION_IDS.includes(s));
+    }
+    return [...DEFAULT_EXPANDED_SECTIONS];
+  }
+
+  /** A section is expanded unless the user toggled it or the config collapsed it. */
+  private _isExpanded(section: SectionId): boolean {
+    return this._sectionOverrides.get(section) ?? this._expandedDefaults.includes(section);
+  }
+
+  private _toggleSection(section: SectionId): void {
+    const next = new Map(this._sectionOverrides);
+    next.set(section, !this._isExpanded(section));
+    this._sectionOverrides = next;
+  }
+
+  /** A key value kept visible in the header of a collapsed section. */
+  private _sectionSummary(section: SectionId): SectionSummary | null {
+    switch (section) {
+      case 'light_controls': {
+        const lightState = this._getLightState();
+        if (!lightState) return null;
+        const isOnLight = lightState.state === 'on';
+        const brightness = lightState.attributes.brightness;
+        if (isOnLight && brightness !== undefined) {
+          return { text: `${Math.round((brightness / 255) * 100)}%` };
+        }
+        return { text: isOnLight ? this._t('common.on') : this._t('common.off') };
+      }
+      case 'temperature_graph': {
+        const tempState = this._getTemperatureState();
+        if (!isAvailable(tempState)) return null;
+        return {
+          text: `${formatNumber(stateNumber(tempState), 1, this._getLanguage())}°C`,
+          entityId: this._entities.temperature,
+        };
+      }
+      case 'connectivity': {
+        const connectivityState = this._getConnectivityState();
+        if (!connectivityState) return null;
+        const isConnected = connectivityState.state === 'on';
+        return {
+          text: this._t(
+            `connectivity.${isConnected ? 'connected' : 'disconnected'}`,
+          ),
+          entityId: this._entities.connectivity,
+        };
+      }
+      case 'alarms': {
+        if (this._alarms.length === 0) return null;
+        const enabled = this._alarms.filter((id) => {
+          const switchId = alarmSwitchEntityId(id);
+          const s = this._getState(switchId);
+          return s?.state === 'on';
+        }).length;
+        return { text: `${enabled}/${this._alarms.length}` };
+      }
+      case 'face_selector': {
+        const faceState = this._getFaceState();
+        if (!faceState) return null;
+        return { text: localizeFace(faceState, this._getLanguage()) };
+      }
+      case 'device_settings':
+      case 'device_info':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Render a collapsible section.
+   * @param section - The section id
+   * @param body - The section body template
+   */
+  private _renderSection(
+    section: SectionId,
+    body: TemplateResult | typeof nothing,
+  ): TemplateResult | typeof nothing {
+    if (body === nothing) {
+      return nothing;
+    }
+    const expanded = this._isExpanded(section);
+    const summary = expanded ? null : this._sectionSummary(section);
+    return html`
+      <div class="section collapsible ${expanded ? 'expanded' : 'collapsed'}">
+        <div class="section-header">
+          <button
+            class="section-toggle"
+            aria-expanded=${String(expanded)}
+            @click=${() => this._toggleSection(section)}
+            @keydown=${(e: KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                this._toggleSection(section);
+              }
+            }}
+          >
+            <ha-icon
+              class="chevron"
+              icon=${expanded ? 'mdi:chevron-down' : 'mdi:chevron-right'}
+            ></ha-icon>
+            <span class="section-title">${this._t(SECTION_TITLE_KEYS[section])}</span>
+          </button>
+          ${summary
+            ? html`<span
+                class="section-summary ${summary.entityId ? 'clickable' : ''}"
+                role=${summary.entityId ? 'button' : nothing}
+                tabindex=${summary.entityId ? '0' : nothing}
+                @click=${summary.entityId
+                  ? () => this._handleMoreInfo(summary.entityId!)
+                  : nothing}
+                @keydown=${summary.entityId
+                  ? (e: KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        this._handleMoreInfo(summary.entityId!);
+                      }
+                    }
+                  : nothing}
+              >${summary.text}</span>`
+            : nothing}
+        </div>
+        ${expanded ? body : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * Render the section body for a given section id.
+   */
+  private _renderSectionBody(section: SectionId): TemplateResult | typeof nothing {
+    switch (section) {
+      case 'face_selector':
+        return this._config.show_face_selector ? this._renderFaceSelector() : nothing;
+      case 'light_controls':
+        return this._config.show_controls ? this._renderLightControls() : nothing;
+      case 'alarms':
+        return this._config.show_alarm_clocks ? this._renderAlarmClocks() : nothing;
+      case 'device_settings':
+        return this._config.show_controls ? this._renderDeviceSettings() : nothing;
+      case 'device_info':
+        return this._renderDeviceInfo();
+      case 'temperature_graph':
+        return this._config.show_temperature_graph ? this._renderTemperatureGraph() : nothing;
+      case 'connectivity':
+        return this._config.show_connectivity ? this._renderConnectivity() : nothing;
+      default:
+        return nothing;
+    }
+  }
+
+  /**
+   * Get a translation key, preferring the pushed states context language.
+   */
+  private _t(key: string): string {
+    return localize(key, this._getLanguage());
   }
 
   /**
@@ -521,7 +779,7 @@ export class RemiCard extends LitElement {
    * Open the more-info dialog for an entity
    * @param entityId - The entity ID to show details for
    */
-  private _handleMoreInfo(entityId: string | null): void {
+  private _handleMoreInfo(entityId: string | null | undefined): void {
     if (!entityId) return;
 
     const event = new CustomEvent<HassMoreInfoDetail>('hass-more-info', {
@@ -1287,13 +1545,9 @@ export class RemiCard extends LitElement {
     return html`
       <ha-card>
         ${this._renderHeader()}
-        ${this._config.show_face_selector ? this._renderFaceSelector() : ''}
-        ${this._config.show_controls ? this._renderLightControls() : ''}
-        ${this._config.show_alarm_clocks ? this._renderAlarmClocks() : ''}
-        ${this._config.show_controls ? this._renderDeviceSettings() : ''}
-        ${this._renderDeviceInfo()}
-        ${this._config.show_temperature_graph ? this._renderTemperatureGraph() : ''}
-        ${this._config.show_connectivity ? this._renderConnectivity() : ''}
+        ${this._sections.map((section) =>
+          this._renderSection(section, this._renderSectionBody(section)),
+        )}
         ${this._renderAddAlarmDialog()}
         ${this._renderDeleteConfirmationDialog()}
       </ha-card>
@@ -1367,10 +1621,76 @@ export class RemiCard extends LitElement {
         margin-bottom: 0;
       }
 
+      /* Collapsible sections */
+      .section.collapsible {
+        margin-bottom: 12px;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--divider-color);
+        background: var(--card-background-color);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--secondary-background-color);
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+
+      .section-header:hover {
+        background: var(--divider-color);
+      }
+
+      .section-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: none;
+        border: none;
+        padding: 0;
+        font: inherit;
+        color: var(--primary-text-color);
+        cursor: pointer;
+      }
+
+      .section-toggle ha-icon {
+        --mdc-icon-size: 20px;
+      }
+
       .section-title {
         font-weight: bold;
-        margin-bottom: 8px;
-        font-size: 1em;
+        font-size: 0.95em;
+        margin: 0;
+      }
+
+      .section-summary {
+        font-size: 0.85em;
+        color: var(--secondary-text-color);
+        white-space: nowrap;
+      }
+
+      .section-summary.clickable {
+        cursor: pointer;
+      }
+
+      .section-summary.clickable:hover {
+        text-decoration: underline;
+      }
+
+      .chevron {
+        transition: transform 0.2s ease;
+      }
+
+      .section.collapsed .chevron {
+        transform: rotate(-90deg);
+      }
+
+      .section-title {
+        margin-bottom: 0;
       }
 
       .light-slider-container {

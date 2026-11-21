@@ -14,6 +14,12 @@
     "smily_face": "Smile",
     "blank_face": "Neutral"
   },
+  "face_selector": {
+    "title": "Face Selector"
+  },
+  "light_controls": {
+    "title": "Night Light"
+  },
   "connectivity": {
     "connected": "Connected",
     "disconnected": "Disconnected",

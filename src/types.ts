@@ -1,3 +1,12 @@
+export type SectionId =
+  | 'face_selector'
+  | 'light_controls'
+  | 'alarms'
+  | 'device_settings'
+  | 'device_info'
+  | 'temperature_graph'
+  | 'connectivity';
+
 export interface RemiCardConfig {
   type: string;
   device_id: string;
@@ -10,6 +19,9 @@ export interface RemiCardConfig {
   show_connectivity?: boolean;
   show_alarm_clocks?: boolean;
   hours_to_show?: number;
+  /** Sections to render and their default expansion state. */
+  sections?: SectionId[];
+  expanded_sections?: SectionId[];
   /** Per-role entity id overrides. */
   face?: string;
   night_light?: string;

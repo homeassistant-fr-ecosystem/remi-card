@@ -14,6 +14,12 @@
     "smily_face": "Sourire",
     "blank_face": "Neutre"
   },
+  "face_selector": {
+    "title": "Sélecteur de visages"
+  },
+  "light_controls": {
+    "title": "Veilleuse"
+  },
   "connectivity": {
     "connected": "Connecté",
     "disconnected": "Déconnecté",
