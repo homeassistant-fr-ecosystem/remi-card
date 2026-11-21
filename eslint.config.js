@@ -4,40 +4,34 @@ import tsparser from '@typescript-eslint/parser';
 
 export default [
   {
-    ignores: ['dist/', 'node_modules/', '*.js', '*.mjs', 'rollup.config.mjs', 'remi-card.js', 'remi-card.js.map']
+    ignores: ['dist/', 'node_modules/', 'coverage/', '*.js', '*.mjs'],
   },
   {
     files: ['src/**/*.ts'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
-        ecmaVersion: 2020,
+        ecmaVersion: 2021,
         sourceType: 'module',
-        project: './tsconfig.json'
       },
-      globals: {
-        window: 'readonly',
-        document: 'readonly',
-        customElements: 'readonly',
-        HTMLElement: 'readonly',
-        console: 'readonly',
-        confirm: 'readonly'
-      }
     },
     plugins: {
-      '@typescript-eslint': tseslint
+      '@typescript-eslint': tseslint,
     },
     rules: {
       ...eslint.configs.recommended.rules,
       ...tseslint.configs.recommended.rules,
+      // TypeScript already resolves globals and DOM types; `no-undef` only
+      // produces false positives on type-only identifiers (e.g. HTMLInputElement).
+      'no-undef': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
-      '@typescript-eslint/no-unused-vars': ['warn', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_'
-      }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       'no-console': 'warn',
-      'prefer-const': 'warn'
-    }
-  }
+      'prefer-const': 'warn',
+    },
+  },
 ];

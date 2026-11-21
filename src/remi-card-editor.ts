@@ -43,7 +43,7 @@ export class RemiCardEditor extends LitElement {
     }
   }
 
-  protected render(): TemplateResult {
+  protected override render(): TemplateResult {
     if (!this.hass || !this._config) {
       return html``;
     }
@@ -141,7 +141,7 @@ export class RemiCardEditor extends LitElement {
     `;
   }
 
-  static get styles() {
+  static override get styles() {
     return css`
       .card-config {
         display: flex;

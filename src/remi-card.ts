@@ -241,7 +241,7 @@ export class RemiCard extends LitElement {
    * @param changedProps - Map of changed properties
    * @returns True if the card should re-render
    */
-  protected shouldUpdate(changedProps: PropertyValues): boolean {
+  protected override shouldUpdate(changedProps: PropertyValues): boolean {
     if (changedProps.has('_config')) {
       return true;
     }
@@ -277,7 +277,7 @@ export class RemiCard extends LitElement {
    * Updates entity references when config or hass changes
    * @param changedProps - Map of changed properties
    */
-  protected updated(changedProps: PropertyValues): void {
+  protected override updated(changedProps: PropertyValues): void {
     super.updated(changedProps);
     if (changedProps.has('hass') || changedProps.has('_config')) {
       this._updateEntities();
@@ -1145,7 +1145,7 @@ export class RemiCard extends LitElement {
    * Combines all sections based on configuration
    * @returns Template result for the entire card
    */
-  protected render(): TemplateResult {
+  protected override render(): TemplateResult {
     if (!this._config || !this.hass) {
       return html``;
     }
@@ -1165,7 +1165,7 @@ export class RemiCard extends LitElement {
     `;
   }
 
-  static get styles() {
+  static override get styles() {
     return css`
       :host {
         display: block;

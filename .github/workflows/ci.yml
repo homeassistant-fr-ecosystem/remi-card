@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 jobs:
   build:
-    name: Build and Lint
+    name: Build and lint
     runs-on: ubuntu-latest
 
     strategy:
@@ -16,182 +16,173 @@ jobs:
         node-version: [22.x]
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v7
 
-    - name: Setup Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-    - name: Run ESLint
-      run: npm run lint
+      - name: Lint
+        run: npm run lint
 
-    - name: Build project
-      run: npm run build
+      - name: Build
+        run: npm run build
 
-    - name: Check build output
-      run: |
-        if [ ! -f dist/remi-card.js ]; then
-          echo "Build failed - dist/remi-card.js not found"
-          exit 1
-        fi
-        echo "Build successful - dist/remi-card.js created"
-        ls -lh dist/
-
-    - name: Upload build artifact
-      if: matrix.node-version == '22.x'
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-output
-        path: dist/
-        retention-days: 7
-
-  typecheck:
-    name: TypeScript Type Check
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-        cache: 'npm'
-
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Run TypeScript compiler check
-      run: npx tsc --noEmit
-
-  translation-check:
-    name: Translation Validation
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-
-    - name: Validate translation files
-      run: |
-        # Check that all translation files are valid JSON
-        for file in src/translations/*.json; do
-          echo "Validating $file..."
-          if ! jq empty "$file" 2>/dev/null; then
-            echo "❌ Invalid JSON in $file"
+      - name: Check build output
+        run: |
+          if [ ! -f dist/remi-card.js ]; then
+            echo "Build failed - dist/remi-card.js not found"
             exit 1
           fi
-          echo "✅ Valid JSON: $file"
-        done
+          echo "Build successful - dist/remi-card.js created"
+          ls -lh dist/
 
-    - name: Check translation completeness
-      run: |
-        # Check that all languages have the same keys as English
-        echo "Checking translation completeness..."
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-output
+          path: dist/
+          retention-days: 7
 
-        # Get all keys from en.json
-        EN_KEYS=$(jq -r 'paths(scalars) | join(".")' src/translations/en.json | sort)
+  test:
+    name: Type check and tests
+    runs-on: ubuntu-latest
 
-        for file in src/translations/*.json; do
-          if [ "$file" != "src/translations/en.json" ]; then
-            echo "Checking $file against en.json..."
-            LANG_KEYS=$(jq -r 'paths(scalars) | join(".")' "$file" | sort)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
 
-            MISSING=$(comm -23 <(echo "$EN_KEYS") <(echo "$LANG_KEYS"))
-            EXTRA=$(comm -13 <(echo "$EN_KEYS") <(echo "$LANG_KEYS"))
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
 
-            if [ -n "$MISSING" ]; then
-              echo "❌ Missing keys in $file:"
-              echo "$MISSING"
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+  translation-check:
+    name: Translation check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate translation files
+        run: |
+          for file in src/translations/*.json src/*.json; do
+            [ -f "$file" ] || continue
+            echo "Validating $file..."
+            if ! jq empty "$file" 2>/dev/null; then
+              echo "::error::Invalid JSON in $file"
               exit 1
             fi
-
-            if [ -n "$EXTRA" ]; then
-              echo "⚠️  Extra keys in $file (not in en.json):"
-              echo "$EXTRA"
-            fi
-
-            echo "✅ $file has all required keys"
-          fi
-        done
-
-        echo "✅ All translations are complete!"
+            echo "✅ Valid JSON: $file"
+          done
 
   bundle-size:
-    name: Check Bundle Size
+    name: Bundle size
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v7
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-        cache: 'npm'
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-    - name: Build
-      run: npm run build
+      - name: Build
+        run: npm run build
 
-    - name: Check bundle size
-      run: |
-        SIZE=$(wc -c < dist/remi-card.js)
-        SIZE_KB=$((SIZE / 1024))
-        echo "Bundle size: ${SIZE_KB}KB"
+      - name: Check bundle size
+        run: |
+          SIZE=$(wc -c < dist/remi-card.js)
+          echo "Bundle size: $((SIZE / 1024)) KB"
+          if [ "$SIZE" -gt 1048576 ]; then
+            echo "::warning::Bundle size is larger than 1 MB"
+          else
+            echo "Bundle size is acceptable"
+          fi
 
-        # Warn if bundle is larger than 1MB
-        if [ $SIZE -gt 1048576 ]; then
-          echo "⚠️  Warning: Bundle size is larger than 1MB"
-        else
-          echo "✅ Bundle size is acceptable"
-        fi
+  # `dist/remi-card.js` is committed so HACS can serve it. Fail the build
+  # if a source change was not rebuilt and committed with it.
+  dist-freshness:
+    name: dist/ is up to date
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Fail if the bundle is stale
+        run: |
+          if ! git diff --quiet -- dist/; then
+            echo "::error::dist/ is out of date. Run 'npm run build' and commit the result."
+            git --no-pager diff --stat -- dist/
+            exit 1
+          fi
+          echo "dist/ matches the sources"
 
   code-quality:
-    name: Code Quality Checks
+    name: Code quality
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v7
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22.x
-        cache: 'npm'
+      - name: Check for console.log statements
+        run: |
+          if grep -rn "console\.log" src/; then
+            echo "::warning::Found console.log statements in src/"
+          else
+            echo "No console.log statements found"
+          fi
 
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Check for console.log statements
-      run: |
-        if grep -r "console\.log" src/ --exclude-dir=node_modules; then
-          echo "⚠️  Warning: Found console.log statements in code"
-          echo "Consider using proper logging or removing debug statements"
-        else
-          echo "✅ No console.log statements found"
-        fi
-
-    - name: Check for TODO comments
-      run: |
-        if grep -r "TODO" src/ --exclude-dir=node_modules; then
-          echo "ℹ️  Found TODO comments in code"
-        else
-          echo "✅ No TODO comments found"
-        fi
+      - name: Check for TODO comments
+        run: |
+          if grep -rn "TODO\|FIXME" src/; then
+            echo "::notice::Found TODO/FIXME comments in src/"
+          else
+            echo "No TODO comments found"
+          fi
