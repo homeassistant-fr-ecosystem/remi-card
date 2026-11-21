@@ -67,16 +67,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      # HACS looks for an asset named after the repository ("remi-card.js"),
-      # so stage the built bundle at the workspace root before uploading it.
-      - name: Stage release asset
-        run: cp dist/remi-card.js remi-card.js
-
       - name: Create release
         uses: ncipollo/release-action@v1
         with:
           makeLatest: true
-          artifacts: "remi-card.js"
+          artifacts: "dist/remi-card.js"
           generateReleaseNotes: true
           tag: ${{ inputs.tag_name }}
           commit: ${{ steps.version.outputs.sha }}
