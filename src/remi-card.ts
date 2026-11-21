@@ -3,27 +3,25 @@
  * Provides controls for face selection, night light, temperature monitoring, and connectivity status
  */
 
-import { LitElement, html, css, PropertyValues, TemplateResult } from 'lit';
+import { LitElement, html, css, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, LovelaceCardEditor } from 'custom-card-helpers';
 import { getFaceIcon, FACE_STATES } from './face-images';
 import { localize, localizeFace, localizeCommon } from './localize';
-
-/**
- * Base interface for Home Assistant entity state
- */
-interface HassEntity {
-  entity_id: string;
-  state: string;
-  attributes: Record<string, unknown>;
-  last_changed: string;
-  last_updated: string;
-  context: {
-    id: string;
-    parent_id: string | null;
-    user_id: string | null;
-  };
-}
+import { RemiCardConfig, type SectionId } from './types';
+import {
+  discoverEntities,
+  discoverAlarms,
+  alarmSwitchEntityId,
+  type DiscoveredEntities,
+} from './entities';
+import {
+  formatNumber,
+  isAvailable,
+  isOn,
+  stateNumber,
+  type HassEntity,
+} from './format';
 
 /**
  * Light entity state with brightness attribute
@@ -72,34 +70,22 @@ interface SelectEntity extends HassEntity {
 }
 
 /**
- * Configuration interface for the Rémi Card
+ * Time entity state for alarm clocks
  */
-interface RemiCardConfig {
-  type: string;
-  device_id: string;
-  device_name?: string;
-  title?: string;
-  show_controls?: boolean;
-  show_face_selector?: boolean;
-  show_temperature_graph?: boolean;
-  show_connectivity?: boolean;
-  hours_to_show?: number;
-}
-
-/**
- * Entity identifiers for Rémi device sensors and controls
- */
-interface RemiEntity {
-  face: string | null;
-  faceSelect: string | null;
-  light: string | null;
-  temperature: string | null;
-  connectivity: string | null;
-  rssi: string | null;
-  luminosity: string | null;
-  firmwareVersion: string | null;
-  clockFormat: string | null;
-  musicMode: string | null;
+interface TimeEntity extends HassEntity {
+  attributes: {
+    name?: string;
+    alarm_id?: string;
+    brightness?: number;
+    volume?: number;
+    face?: string;
+    lightnight?: boolean;
+    days?: string[];
+    days_indices?: number[];
+    recurrence?: unknown[];
+    friendly_name?: string;
+    [key: string]: unknown;
+  };
 }
 
 /**
@@ -118,6 +104,10 @@ interface CustomCardEntry {
   description: string;
   preview: boolean;
   documentationURL: string;
+  getEntitySuggestion?: (
+    hass: HomeAssistant,
+    entityId: string,
+  ) => { config: Record<string, unknown> } | null;
 }
 
 declare global {
@@ -138,6 +128,45 @@ const FACE_HA_TO_API: Record<string, string> = {
   smily_face: 'smilyFace',
 };
 
+/** Collapsible section identifiers. `status` (header) is always visible. */
+export const SECTION_IDS = [
+  'face_selector',
+  'light_controls',
+  'alarms',
+  'device_settings',
+  'device_info',
+  'temperature_graph',
+  'connectivity',
+] as const;
+
+/** Sections expanded by default when the config does not set `expanded_sections`. */
+export const DEFAULT_EXPANDED_SECTIONS: readonly SectionId[] = [
+  'face_selector',
+  'light_controls',
+  'alarms',
+  'device_settings',
+  'device_info',
+  'temperature_graph',
+  'connectivity',
+];
+
+/** Section titles, used by the collapsible headers. */
+const SECTION_TITLE_KEYS: Record<SectionId, string> = {
+  face_selector: 'face_selector.title',
+  light_controls: 'light_controls.title',
+  alarms: 'alarm.title',
+  device_settings: 'settings.title',
+  device_info: 'device_info.title',
+  temperature_graph: 'temperature.title',
+  connectivity: 'connectivity.title',
+};
+
+/** Section summary shown in the header while collapsed. */
+interface SectionSummary {
+  text: string;
+  entityId?: string;
+}
+
 /**
  * Custom Lovelace card for Rémi UrbanHello devices
  */
@@ -145,18 +174,20 @@ const FACE_HA_TO_API: Record<string, string> = {
 export class RemiCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private _config!: RemiCardConfig;
-  @state() private _entities: RemiEntity = {
-    face: null,
-    faceSelect: null,
-    light: null,
-    temperature: null,
-    connectivity: null,
-    rssi: null,
-    luminosity: null,
-    firmwareVersion: null,
-    clockFormat: null,
-    musicMode: null,
-  };
+  @state() private _entities: DiscoveredEntities = {};
+  @state() private _alarms: string[] = [];
+  @state() private _alarmsExpanded = false;
+  @state() private _addAlarmDialog = false;
+  @state() private _deleteAlarmId: string | null = null;
+  @state() private _deleteAlarmName = '';
+
+  /** User toggles on the collapsible section headers: `true` = expanded. */
+  @state() private _sectionOverrides = new Map<string, boolean>();
+
+  private _unsubscribe?: () => void;
+
+  /** Entity states pushed by the `states` context; falls back to `hass.states`. */
+  @state() private _states?: HomeAssistant['states'];
 
   /**
    * Get a default stub configuration for the card
@@ -172,6 +203,7 @@ export class RemiCard extends LitElement {
       show_face_selector: true,
       show_temperature_graph: true,
       show_connectivity: true,
+      show_alarm_clocks: true,
       hours_to_show: 24,
     };
   }
@@ -202,11 +234,12 @@ export class RemiCard extends LitElement {
       show_face_selector: true,
       show_temperature_graph: true,
       show_connectivity: true,
+      show_alarm_clocks: true,
       hours_to_show: 24,
       ...config,
     };
 
-    this._updateEntities();
+    this._refreshEntities();
   }
 
   /**
@@ -217,31 +250,73 @@ export class RemiCard extends LitElement {
     return 5;
   }
 
+  public override connectedCallback(): void {
+    super.connectedCallback();
+    this._requestStatesContext();
+  }
+
+  public override disconnectedCallback(): void {
+    this._unsubscribe?.();
+    this._unsubscribe = undefined;
+    super.disconnectedCallback();
+  }
+
+  /**
+   * Ask for the `states` context so Home Assistant pushes state changes
+   * without us re-rendering on every unrelated change of the `hass` object.
+   * If no provider answers (older frontend), we keep using `hass.states`.
+   */
+  private _requestStatesContext(): void {
+    const event = new CustomEvent('context-request', {
+      bubbles: true,
+      composed: true,
+    }) as CustomEvent & {
+      context?: unknown;
+      subscribe?: boolean;
+      callback?: (
+        states: HomeAssistant['states'],
+        unsubscribe: () => void,
+      ) => void;
+    };
+    event.context = 'states';
+    event.subscribe = true;
+    event.callback = (states, unsubscribe) => {
+      this._unsubscribe = unsubscribe;
+      this._states = states;
+    };
+    this.dispatchEvent(event);
+  }
+
   /**
    * Determine if the card should update based on changed properties
    * Optimizes rendering by only updating when relevant entities change
    * @param changedProps - Map of changed properties
    * @returns True if the card should re-render
    */
-  protected shouldUpdate(changedProps: PropertyValues): boolean {
-    if (changedProps.has('_config')) {
+  protected override shouldUpdate(changedProps: PropertyValues): boolean {
+    if (changedProps.has('_config') || changedProps.has('_sectionOverrides')) {
       return true;
     }
-
-    if (changedProps.has('hass')) {
-      const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
-      if (!oldHass || !this._entities) {
-        return true;
-      }
-
-      // Check if any of our entities changed
-      const entities = Object.values(this._entities).filter((e) => e !== null);
-      return entities.some((entityId) => {
-        return oldHass.states[entityId] !== this.hass.states[entityId];
-      });
+    if (!this.hass) {
+      return false;
     }
-
-    return true;
+    // No context provider answered: fall back to the normal hass-driven updates.
+    if (!this._states) {
+      return changedProps.has('hass') || changedProps.has('_states');
+    }
+    const oldHass = changedProps.get('hass') as HomeAssistant | undefined;
+    // Check if any of our watched entities changed via the pushed states context.
+    const watchedEntities = Object.values(this._entities).filter(
+      (e): e is string => e !== null,
+    );
+    for (const alarmId of this._alarms) {
+      const switchId = alarmSwitchEntityId(alarmId);
+      watchedEntities.push(switchId);
+    }
+    return watchedEntities.some((entityId) => {
+      const oldState = oldHass ? oldHass.states[entityId] : undefined;
+      return oldState !== this._states?.[entityId];
+    });
   }
 
   /**
@@ -249,11 +324,207 @@ export class RemiCard extends LitElement {
    * Updates entity references when config or hass changes
    * @param changedProps - Map of changed properties
    */
-  protected updated(changedProps: PropertyValues): void {
+  protected override updated(changedProps: PropertyValues): void {
     super.updated(changedProps);
     if (changedProps.has('hass') || changedProps.has('_config')) {
-      this._updateEntities();
+      this._refreshEntities();
     }
+    if (changedProps.has('hass')) {
+      const newHass = changedProps.get('hass') as HomeAssistant | undefined;
+      if (newHass && newHass.locale !== this.hass.locale) {
+        // Language changed: refresh localized strings.
+        this.requestUpdate();
+      }
+    }
+  }
+
+  /**
+   * Update entity references based on config and hass state.
+   * Uses translation-key-based discovery (stable across renames) with
+   * entity-id suffix fallback, then alarm entities by prefix.
+   */
+  private _refreshEntities(): void {
+    if (!this.hass || !this._config) return;
+
+    const base = this._slugify(
+      this._config.device_prefix ??
+      this._config.device_name ??
+      this._config.device_id,
+    );
+    this._entities = discoverEntities(this.hass, this._config);
+    this._alarms = discoverAlarms(this.hass, base);
+  }
+
+  /** Sections to render, from config or defaults. */
+  private get _sections(): SectionId[] {
+    const configured = this._config.sections;
+    if (configured && configured.length) {
+      return configured.filter((s) => SECTION_IDS.includes(s));
+    }
+    return [...SECTION_IDS];
+  }
+
+  /** Sections that start expanded; the others start collapsed. */
+  private get _expandedDefaults(): SectionId[] {
+    const configured = this._config.expanded_sections;
+    if (configured && configured.length) {
+      return configured.filter((s) => SECTION_IDS.includes(s));
+    }
+    return [...DEFAULT_EXPANDED_SECTIONS];
+  }
+
+  /** A section is expanded unless the user toggled it or the config collapsed it. */
+  private _isExpanded(section: SectionId): boolean {
+    return this._sectionOverrides.get(section) ?? this._expandedDefaults.includes(section);
+  }
+
+  private _toggleSection(section: SectionId): void {
+    const next = new Map(this._sectionOverrides);
+    next.set(section, !this._isExpanded(section));
+    this._sectionOverrides = next;
+  }
+
+  /** A key value kept visible in the header of a collapsed section. */
+  private _sectionSummary(section: SectionId): SectionSummary | null {
+    switch (section) {
+      case 'light_controls': {
+        const lightState = this._getLightState();
+        if (!lightState) return null;
+        const isOnLight = lightState.state === 'on';
+        const brightness = lightState.attributes.brightness;
+        if (isOnLight && brightness !== undefined) {
+          return { text: `${Math.round((brightness / 255) * 100)}%` };
+        }
+        return { text: isOnLight ? this._t('common.on') : this._t('common.off') };
+      }
+      case 'temperature_graph': {
+        const tempState = this._getTemperatureState();
+        if (!isAvailable(tempState)) return null;
+        return {
+          text: `${formatNumber(stateNumber(tempState), 1, this._getLanguage())}°C`,
+          entityId: this._entities.temperature,
+        };
+      }
+      case 'connectivity': {
+        const connectivityState = this._getConnectivityState();
+        if (!connectivityState) return null;
+        const isConnected = connectivityState.state === 'on';
+        return {
+          text: this._t(
+            `connectivity.${isConnected ? 'connected' : 'disconnected'}`,
+          ),
+          entityId: this._entities.connectivity,
+        };
+      }
+      case 'alarms': {
+        if (this._alarms.length === 0) return null;
+        const enabled = this._alarms.filter((id) => {
+          const switchId = alarmSwitchEntityId(id);
+          const s = this._getState(switchId);
+          return s?.state === 'on';
+        }).length;
+        return { text: `${enabled}/${this._alarms.length}` };
+      }
+      case 'face_selector': {
+        const faceState = this._getFaceState();
+        if (!faceState) return null;
+        return { text: localizeFace(faceState, this._getLanguage()) };
+      }
+      case 'device_settings':
+      case 'device_info':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Render a collapsible section.
+   * @param section - The section id
+   * @param body - The section body template
+   */
+  private _renderSection(
+    section: SectionId,
+    body: TemplateResult | typeof nothing,
+  ): TemplateResult | typeof nothing {
+    if (body === nothing) {
+      return nothing;
+    }
+    const expanded = this._isExpanded(section);
+    const summary = expanded ? null : this._sectionSummary(section);
+    return html`
+      <div class="section collapsible ${expanded ? 'expanded' : 'collapsed'}">
+        <div class="section-header">
+          <button
+            class="section-toggle"
+            aria-expanded=${String(expanded)}
+            @click=${() => this._toggleSection(section)}
+            @keydown=${(e: KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                this._toggleSection(section);
+              }
+            }}
+          >
+            <ha-icon
+              class="chevron"
+              icon=${expanded ? 'mdi:chevron-down' : 'mdi:chevron-right'}
+            ></ha-icon>
+            <span class="section-title">${this._t(SECTION_TITLE_KEYS[section])}</span>
+          </button>
+          ${summary
+            ? html`<span
+                class="section-summary ${summary.entityId ? 'clickable' : ''}"
+                role=${summary.entityId ? 'button' : nothing}
+                tabindex=${summary.entityId ? '0' : nothing}
+                @click=${summary.entityId
+                  ? () => this._handleMoreInfo(summary.entityId!)
+                  : nothing}
+                @keydown=${summary.entityId
+                  ? (e: KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        this._handleMoreInfo(summary.entityId!);
+                      }
+                    }
+                  : nothing}
+              >${summary.text}</span>`
+            : nothing}
+        </div>
+        ${expanded ? body : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * Render the section body for a given section id.
+   */
+  private _renderSectionBody(section: SectionId): TemplateResult | typeof nothing {
+    switch (section) {
+      case 'face_selector':
+        return this._config.show_face_selector ? this._renderFaceSelector() : nothing;
+      case 'light_controls':
+        return this._config.show_controls ? this._renderLightControls() : nothing;
+      case 'alarms':
+        return this._config.show_alarm_clocks ? this._renderAlarmClocks() : nothing;
+      case 'device_settings':
+        return this._config.show_controls ? this._renderDeviceSettings() : nothing;
+      case 'device_info':
+        return this._renderDeviceInfo();
+      case 'temperature_graph':
+        return this._config.show_temperature_graph ? this._renderTemperatureGraph() : nothing;
+      case 'connectivity':
+        return this._config.show_connectivity ? this._renderConnectivity() : nothing;
+      default:
+        return nothing;
+    }
+  }
+
+  /**
+   * Get a translation key, preferring the pushed states context language.
+   */
+  private _t(key: string): string {
+    return localize(key, this._getLanguage());
   }
 
   /**
@@ -271,42 +542,11 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Update entity identifiers based on the device name
-   * Constructs entity IDs for all Rémi device sensors and controls.
-   *
-   * The integration generates entity_ids from the device name slugified
-   * (e.g. ``select.baby_room_face``), not from the device id. We therefore
-   * derive the entity base from ``device_name`` (falling back to ``device_id``).
-   */
-  private _updateEntities(): void {
-    if (!this.hass || !this._config) return;
-
-    const base = this._config.device_name
-      ? this._slugify(this._config.device_name)
-      : this._config.device_id;
-
-    // The face is exposed by the integration via a select entity, not a
-    // dedicated sensor, so there is no ``sensor.*_face`` to read.
-    this._entities = {
-      face: null,
-      faceSelect: `select.${base}_face`,
-      light: `light.${base}_night_light`,
-      temperature: `sensor.${base}_temperature`,
-      connectivity: `binary_sensor.${base}_connectivity`,
-      rssi: `sensor.${base}_rssi`,
-      luminosity: `sensor.${base}_luminosity`,
-      firmwareVersion: `sensor.${base}_firmware_version`,
-      clockFormat: `select.${base}_clock_format`,
-      musicMode: `select.${base}_music_mode`,
-    };
-  }
-
-  /**
    * Get the state object for an entity
    * @param entityId - The entity ID to retrieve
    * @returns The entity state object or undefined if not found
    */
-  private _getState(entityId: string | null): HassEntity | undefined {
+  private _getState(entityId: string | null | undefined): HassEntity | undefined {
     if (!entityId || !this.hass) return undefined;
     return this.hass.states[entityId] as HassEntity | undefined;
   }
@@ -318,7 +558,7 @@ export class RemiCard extends LitElement {
    * @returns The face state in snake_case (e.g. 'sleepy_face') or null if unavailable
    */
   private _getFaceState(): string | null {
-    const faceSelectEntity = this._getState(this._entities.faceSelect) as SelectEntity | undefined;
+    const faceSelectEntity = this._getState(this._entities.face) as SelectEntity | undefined;
     if (!faceSelectEntity || faceSelectEntity.state === 'unavailable') return null;
     return faceSelectEntity.state;
   }
@@ -328,7 +568,7 @@ export class RemiCard extends LitElement {
    * @returns The light entity state object or undefined if not found
    */
   private _getLightState(): LightEntity | undefined {
-    return this._getState(this._entities.light) as LightEntity | undefined;
+    return this._getState(this._entities.night_light) as LightEntity | undefined;
   }
 
   /**
@@ -344,7 +584,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getFaceSelectState(): SelectEntity | undefined {
-    return this._getState(this._entities.faceSelect) as SelectEntity | undefined;
+    return this._getState(this._entities.face) as SelectEntity | undefined;
   }
 
   /**
@@ -376,7 +616,31 @@ export class RemiCard extends LitElement {
    * @returns The sensor entity state object or undefined if not found
    */
   private _getFirmwareVersionState(): SensorEntity | undefined {
-    return this._getState(this._entities.firmwareVersion) as SensorEntity | undefined;
+    return this._getState(this._entities.firmware_version) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the IP address sensor state
+   * @returns The sensor entity state object or undefined if not found
+   */
+  private _getIpAddressState(): SensorEntity | undefined {
+    return this._getState(this._entities.ip_address) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the alive binary sensor state
+   * @returns The binary sensor entity state object or undefined if not found
+   */
+  private _getAliveState(): BinarySensorEntity | undefined {
+    return this._getState(this._entities.alive) as BinarySensorEntity | undefined;
+  }
+
+  /**
+   * Get the firmware update binary sensor state
+   * @returns The binary sensor entity state object or undefined if not found
+   */
+  private _getFirmwareUpdateState(): BinarySensorEntity | undefined {
+    return this._getState(this._entities.firmware_update) as BinarySensorEntity | undefined;
   }
 
   /**
@@ -384,7 +648,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getClockFormatState(): SelectEntity | undefined {
-    return this._getState(this._entities.clockFormat) as SelectEntity | undefined;
+    return this._getState(this._entities.clock_format) as SelectEntity | undefined;
   }
 
   /**
@@ -392,7 +656,31 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getMusicModeState(): SelectEntity | undefined {
-    return this._getState(this._entities.musicMode) as SelectEntity | undefined;
+    return this._getState(this._entities.music_mode) as SelectEntity | undefined;
+  }
+
+  /**
+   * Get the volume control number state
+   * @returns The number entity state object or undefined if not found
+   */
+  private _getVolumeControlState(): SensorEntity | undefined {
+    return this._getState(this._entities.volume_control) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the noise threshold number state
+   * @returns The number entity state object or undefined if not found
+   */
+  private _getNoiseThresholdState(): SensorEntity | undefined {
+    return this._getState(this._entities.noise_threshold) as SensorEntity | undefined;
+  }
+
+  /**
+   * Get the night face level number state
+   * @returns The number entity state object or undefined if not found
+   */
+  private _getNightFaceLevelState(): SensorEntity | undefined {
+    return this._getState(this._entities.night_face_level) as SensorEntity | undefined;
   }
 
   /**
@@ -400,7 +688,7 @@ export class RemiCard extends LitElement {
    * @param entityId - The select entity ID
    * @param option - The option to select
    */
-  private _handleSelectOption(entityId: string | null, option: string): void {
+  private _handleSelectOption(entityId: string | null | undefined, option: string): void {
     if (!entityId) return;
     this.hass.callService('select', 'select_option', {
       entity_id: entityId,
@@ -422,15 +710,15 @@ export class RemiCard extends LitElement {
    * @param brightness - Brightness percentage (0-100), 0 turns off the light
    */
   private _handleLightControl(brightness: number): void {
-    if (!this._entities.light) return;
+    if (!this._entities.night_light) return;
 
     if (brightness === 0) {
       this.hass.callService('light', 'turn_off', {
-        entity_id: this._entities.light,
+        entity_id: this._entities.night_light,
       });
     } else {
       this.hass.callService('light', 'turn_on', {
-        entity_id: this._entities.light,
+        entity_id: this._entities.night_light,
         brightness_pct: brightness,
       });
     }
@@ -441,7 +729,7 @@ export class RemiCard extends LitElement {
    * @param face - The face state to select (e.g., 'sleepyFace', 'awakeFace')
    */
   private _handleFaceSelect(face: string): void {
-    if (!this._entities.faceSelect) return;
+    if (!this._entities.face) return;
 
     // HA select entity expects snake_case options, API uses camelCase
     const FACE_API_TO_HA: Record<string, string> = {
@@ -454,7 +742,7 @@ export class RemiCard extends LitElement {
     const option = FACE_API_TO_HA[face] ?? face;
 
     this.hass.callService('select', 'select_option', {
-      entity_id: this._entities.faceSelect,
+      entity_id: this._entities.face,
       option,
     });
   }
@@ -491,7 +779,7 @@ export class RemiCard extends LitElement {
    * Open the more-info dialog for an entity
    * @param entityId - The entity ID to show details for
    */
-  private _handleMoreInfo(entityId: string | null): void {
+  private _handleMoreInfo(entityId: string | null | undefined): void {
     if (!entityId) return;
 
     const event = new CustomEvent<HassMoreInfoDetail>('hass-more-info', {
@@ -521,15 +809,15 @@ export class RemiCard extends LitElement {
     const faceName = faceState ? localizeFace(faceState, lang) : localizeCommon('unknown', lang);
 
     let statusText = '';
-    if (tempState && tempState.state !== 'unavailable') {
-      statusText += `${tempState.state}°C`;
+    if (isAvailable(tempState)) {
+      statusText += `${formatNumber(stateNumber(tempState), 1, lang)}°C`;
     }
-    if (luminosityState && luminosityState.state !== 'unavailable') {
-      statusText += ` • ${luminosityState.state} lx`;
+    if (isAvailable(luminosityState)) {
+      statusText += ` • ${formatNumber(stateNumber(luminosityState), 0, lang)} lx`;
     }
     statusText += ` • ${faceName}`;
 
-    if (lightState?.state === 'on') {
+    if (lightState && isOn(lightState)) {
       const brightness = lightState.attributes.brightness;
       if (brightness !== undefined) {
         const percent = Math.round((brightness / 255) * 100);
@@ -658,7 +946,7 @@ export class RemiCard extends LitElement {
                   .value=${clockFormatState.state || ''}
                   @change=${(e: Event) => {
                     const target = e.target as HTMLSelectElement;
-                    this._handleSelectOption(this._entities.clockFormat, target.value);
+                    this._handleSelectOption(this._entities.clock_format, target.value);
                   }}
                 >
                   <option value="12h">${localize('clock_format.12h', lang)}</option>
@@ -675,7 +963,7 @@ export class RemiCard extends LitElement {
                   .value=${musicModeState.state || ''}
                   @change=${(e: Event) => {
                     const target = e.target as HTMLSelectElement;
-                    this._handleSelectOption(this._entities.musicMode, target.value);
+                    this._handleSelectOption(this._entities.music_mode, target.value);
                   }}
                 >
                   <option value="off">${localize('music_mode.off', lang)}</option>
@@ -768,28 +1056,505 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Render the device info section
+   * Shows IP address, alive status, firmware update, volume, noise threshold,
+   * and night face level when available.
+   * @returns Template result for the device info section
+   */
+  private _renderDeviceInfo(): TemplateResult {
+    const ipState = this._getIpAddressState();
+    const aliveState = this._getAliveState();
+    const fwUpdateState = this._getFirmwareUpdateState();
+    const volumeState = this._getVolumeControlState();
+    const noiseState = this._getNoiseThresholdState();
+    const nightFaceState = this._getNightFaceLevelState();
+    const lang = this._getLanguage();
+
+    const tiles: Array<TemplateResult> = [];
+
+    if (isAvailable(ipState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:ip-network"></ha-icon>
+          <span>${ipState!.state}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(aliveState)) {
+      tiles.push(html`
+        <div class="connectivity-item ${isOn(aliveState) ? 'connected' : 'disconnected'}">
+          <ha-icon icon="${isOn(aliveState) ? 'mdi:lan-connect' : 'mdi:lan-disconnect'}"></ha-icon>
+          <span>${localizeCommon(isOn(aliveState) ? 'on' : 'off', lang)}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(fwUpdateState)) {
+      tiles.push(html`
+        <div class="connectivity-item ${isOn(fwUpdateState) ? 'alarm' : 'connected'}">
+          <ha-icon icon="${isOn(fwUpdateState) ? 'mdi:alert' : 'mdi:check'}"></ha-icon>
+          <span>${localize(isOn(fwUpdateState) ? 'firmware.update_available' : 'firmware.up_to_date', lang)}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(volumeState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:volume-high"></ha-icon>
+          <span>${formatNumber(stateNumber(volumeState), 0, lang)}%</span>
+        </div>
+      `);
+    }
+    if (isAvailable(noiseState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:bell"></ha-icon>
+          <span>${formatNumber(stateNumber(noiseState), 0, lang)}</span>
+        </div>
+      `);
+    }
+    if (isAvailable(nightFaceState)) {
+      tiles.push(html`
+        <div class="connectivity-item">
+          <ha-icon icon="mdi:brightness-6"></ha-icon>
+          <span>${formatNumber(stateNumber(nightFaceState), 0, lang)}%</span>
+        </div>
+      `);
+    }
+
+    if (tiles.length === 0) {
+      return html``;
+    }
+
+    return html`
+      <div class="section">
+        <div class="section-title">${localize('device_info.title', lang)}</div>
+        <div class="connectivity">
+          ${tiles}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Toggle the alarms panel visibility
+   */
+  private _toggleAlarmsPanel(): void {
+    this._alarmsExpanded = !this._alarmsExpanded;
+  }
+
+  /**
+   * Toggle an alarm switch
+   * @param switchEntityId - The switch entity ID to toggle
+   * @param event - The click event
+   */
+  private _handleAlarmToggle(switchEntityId: string, event: Event): void {
+    event.stopPropagation(); // Prevent opening more-info dialog
+
+    const switchState = this._getState(switchEntityId);
+    // Default to turning on when the current state is not yet known.
+    const isCurrentlyOn = switchState?.state === 'on';
+    const service = isCurrentlyOn ? 'turn_off' : 'turn_on';
+    this.hass.callService('switch', service, {
+      entity_id: switchEntityId,
+    });
+  }
+
+  /**
+   * Open the add alarm dialog
+   */
+  private _handleAddAlarmOpen(): void {
+    this._addAlarmDialog = true;
+  }
+
+  /**
+   * Close the add alarm dialog
+   */
+  private _handleAddAlarmClose(): void {
+    this._addAlarmDialog = false;
+  }
+
+  /**
+   * Submit the add alarm form
+   * Calls the urbanhello_remi.create_alarm service
+   * @param e - The form submit event
+   */
+  private _handleAddAlarmSubmit(e: Event): void {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+
+    const time = (formData.get('time') as string) || '';
+    if (!time) return;
+
+    const name = (formData.get('name') as string) || undefined;
+    const enabled = formData.get('enabled') === 'on';
+    const days = Array.from(formData.getAll('days')).map(Number);
+
+    this.hass.callService('urbanhello_remi', 'create_alarm', {
+      time,
+      name,
+      enabled,
+      days,
+    }, {
+      device_id: this._config.device_id,
+    });
+
+    this._addAlarmDialog = false;
+    form.reset();
+  }
+
+  /**
+   * Trigger (test) an alarm
+   * Calls the urbanhello_remi.trigger_alarm service
+   * @param alarmId - The alarm ID to trigger
+   */
+  private _handleTriggerAlarm(alarmId: string): void {
+    this.hass.callService('urbanhello_remi', 'trigger_alarm', {
+      alarm_id: alarmId,
+    }, {
+      device_id: this._config.device_id,
+    });
+  }
+
+  /**
+   * Prepare the deletion of an alarm (opens confirmation dialog)
+   * @param alarmId - The alarm ID to delete
+   * @param alarmName - The alarm name for the confirmation message
+   */
+  private _handleDeleteAlarmPrepare(alarmId: string, alarmName: string): void {
+    this._deleteAlarmId = alarmId;
+    this._deleteAlarmName = alarmName;
+  }
+
+  /**
+   * Cancel the deletion of an alarm
+   */
+  private _handleDeleteAlarmCancel(): void {
+    this._deleteAlarmId = null;
+    this._deleteAlarmName = '';
+  }
+
+  /**
+   * Confirm the deletion of an alarm
+   * Calls the urbanhello_remi.delete_alarm service
+   */
+  private _handleDeleteAlarmConfirm(): void {
+    if (!this._deleteAlarmId) return;
+
+    this.hass.callService('urbanhello_remi', 'delete_alarm', {
+      alarm_id: this._deleteAlarmId,
+    }, {
+      device_id: this._config.device_id,
+    });
+
+    this._deleteAlarmId = null;
+    this._deleteAlarmName = '';
+  }
+
+  /**
+   * Update an existing alarm
+   * Calls the urbanhello_remi.update_alarm service
+   * @param alarmId - The alarm ID to update
+   * @param updates - Fields to update (time, enabled, name, days, face, brightness)
+   */
+  private _handleUpdateAlarm(alarmId: string, updates: Record<string, unknown>): void {
+    if (!alarmId) return;
+
+    this.hass.callService('urbanhello_remi', 'update_alarm', {
+      alarm_id: alarmId,
+      ...updates,
+    }, {
+      device_id: this._config.device_id,
+    });
+  }
+
+  /**
+   * Snooze a currently active alarm
+   * Calls the urbanhello_remi.snooze_alarm service
+   * @param alarmId - The alarm ID to snooze
+   * @param duration - Snooze duration in minutes (1-60)
+   */
+  private _handleSnoozeAlarm(alarmId: string, duration = 9): void {
+    if (!alarmId) return;
+
+    this.hass.callService('urbanhello_remi', 'snooze_alarm', {
+      alarm_id: alarmId,
+      duration,
+    }, {
+      device_id: this._config.device_id,
+    });
+  }
+
+  /**
+   * Render the alarm clocks section
+   * Shows all configured alarm clocks for this device
+   * @returns Template result for the alarm clocks section
+   */
+  private _renderAlarmClocks(): TemplateResult {
+    if (!this._alarms || this._alarms.length === 0) {
+      return html``;
+    }
+
+    const lang = this._getLanguage();
+    const alarmsCount = this._alarms.length;
+
+    return html`
+      <div class="section">
+        <div class="alarms-section-header" @click=${this._toggleAlarmsPanel}>
+          <div class="alarms-section-title">
+            <ha-icon icon="mdi:alarm-multiple"></ha-icon>
+            <span>⏰ ${localize('alarm.title', lang)} (${alarmsCount})</span>
+          </div>
+          <ha-icon-button
+            icon="mdi:plus"
+            @click=${(e: Event) => { e.stopPropagation(); this._handleAddAlarmOpen(); }}
+            title="${localize('alarm.add_alarm', lang)}"
+          ></ha-icon-button>
+          <ha-icon icon=${this._alarmsExpanded ? 'mdi:chevron-up' : 'mdi:chevron-down'}></ha-icon>
+        </div>
+        ${this._alarmsExpanded ? html`
+        <div class="alarms-container">
+          ${this._alarms.map((alarmId) => {
+            const alarmState = this._getState(alarmId) as TimeEntity | undefined;
+            if (!alarmState || alarmState.state === 'unavailable') {
+              return html``;
+            }
+
+            const switchEntityId = alarmSwitchEntityId(alarmId);
+            const switchState = this._getState(switchEntityId);
+            const isAlarmEnabled = switchState?.state === 'on';
+
+            const alarmName = alarmState.attributes.name || 'Alarm';
+            const alarmTime = alarmState.state;
+            const days = alarmState.attributes.days || [];
+            const face = alarmState.attributes.face;
+            const brightness = alarmState.attributes.brightness;
+            const volume = alarmState.attributes.volume;
+
+            // Format days for display
+            const daysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            const selectedDaysIndices = alarmState.attributes.days_indices || [];
+            const daysDisplay = selectedDaysIndices.length > 0
+              ? selectedDaysIndices.map(i => daysShort[i]).join(', ')
+              : localize('alarm.no_repeat', lang);
+
+            return html`
+              <div class="alarm-card ${isAlarmEnabled ? 'enabled' : 'disabled'}" @click=${() => this._handleMoreInfo(alarmId)}>
+                <div class="alarm-header">
+                  <div class="alarm-time-container">
+                    <div class="alarm-time">${alarmTime}</div>
+                    <div class="alarm-name">${alarmName}</div>
+                  </div>
+                  <div class="alarm-actions">
+                    <ha-switch
+                      .checked=${isAlarmEnabled}
+                      @click=${(e: Event) => this._handleAlarmToggle(switchEntityId, e)}
+                    ></ha-switch>
+                    <ha-icon-button
+                      icon="mdi:alarm"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this._handleTriggerAlarm(alarmId);
+                      }}
+                      title="${localize('alarm.trigger_alarm', lang)}"
+                    ></ha-icon-button>
+                    ${isAlarmEnabled
+                      ? html`<ha-icon-button
+                          icon="mdi:pause"
+                          @click=${(e: Event) => {
+                            e.stopPropagation();
+                            this._handleSnoozeAlarm(alarmId);
+                          }}
+                          title="${localize('alarm.snooze_alarm', lang)}"
+                        ></ha-icon-button>`
+                      : nothing}
+                    <ha-icon-button
+                      icon="mdi:pencil"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this._handleUpdateAlarm(alarmId, { enabled: !isAlarmEnabled });
+                      }}
+                      title="${localize('alarm.update_alarm', lang)}"
+                    ></ha-icon-button>
+                    <ha-icon-button
+                      icon="mdi:delete-outline"
+                      @click=${(e: Event) => {
+                        e.stopPropagation();
+                        this._handleDeleteAlarmPrepare(alarmId, alarmName);
+                      }}
+                      title="${localize('alarm.delete_alarm', lang)}"
+                    ></ha-icon-button>
+                  </div>
+                </div>
+                <div class="alarm-details">
+                  ${days.length > 0
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:calendar-repeat"></ha-icon>
+                          <span>${daysDisplay}</span>
+                        </div>
+                      `
+                    : html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:calendar-blank"></ha-icon>
+                          <span>${daysDisplay}</span>
+                        </div>
+                      `}
+                  ${face
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:emoticon"></ha-icon>
+                          <span>${localizeFace(face, lang)}</span>
+                        </div>
+                      `
+                    : ''}
+                  ${brightness !== undefined
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:brightness-6"></ha-icon>
+                          <span>${brightness}%</span>
+                        </div>
+                      `
+                    : ''}
+                  ${volume !== undefined
+                    ? html`
+                        <div class="alarm-detail-item">
+                          <ha-icon icon="mdi:volume-high"></ha-icon>
+                          <span>${volume}%</span>
+                        </div>
+                      `
+                    : ''}
+                </div>
+              </div>
+            `;
+          })}
+        </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  /**
+   * Render the add alarm dialog
+   * Opens a form to create a new alarm via the urbanhello_remi.create_alarm service
+   * @returns Template result for the dialog, or empty if closed
+   */
+  private _renderAddAlarmDialog(): TemplateResult {
+    if (!this._addAlarmDialog) return html``;
+    const lang = this._getLanguage();
+
+    return html`
+      <div class="modal-backdrop" @click=${this._handleAddAlarmClose}></div>
+      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-content">
+          <h3>${localize('alarm.add_alarm', lang)}</h3>
+          <form @submit=${this._handleAddAlarmSubmit}>
+            <div class="form-field">
+              <label>${localize('alarm.new_alarm_name', lang)}</label>
+              <input type="text" name="name" placeholder="${localize('alarm.new_alarm_name', lang)}" />
+            </div>
+            <div class="form-field">
+              <label>${localize('alarm.time', lang)}</label>
+              <input type="time" name="time" required />
+            </div>
+            <div class="form-field">
+              <label>${localize('alarm.enabled', lang)}</label>
+              <input type="checkbox" name="enabled" checked />
+            </div>
+            <div class="form-field days">
+              <label>${localize('alarm.days.title', lang)}</label>
+              <div class="day-checkboxes">
+                ${[0, 1, 2, 3, 4, 5, 6].map(
+                  (i) => html`
+                    <label class="day-checkbox">
+                      <input type="checkbox" name="days" value="${i}" />
+                      <span>${localize(`alarm.days.${i}`, lang)}</span>
+                    </label>
+                  `
+                )}
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="button" @click=${this._handleAddAlarmClose}>
+                ${localize('alarm.confirm_delete_no', lang)}
+              </button>
+              <button type="submit">${localize('alarm.add_alarm', lang)}</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    `;
+  }
+
+  /**
+   * Render the delete confirmation dialog
+   * Asks for confirmation before calling urbanhello_remi.delete_alarm
+   * @returns Template result for the dialog, or empty if closed
+   */
+  private _renderDeleteConfirmationDialog(): TemplateResult {
+    if (!this._deleteAlarmId) return html``;
+    const lang = this._getLanguage();
+
+    return html`
+      <div class="modal-backdrop" @click=${this._handleDeleteAlarmCancel}></div>
+      <dialog class="modal" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal-content">
+          <h3>${localize('alarm.delete_alarm', lang)}</h3>
+          <p>
+            ${localize('alarm.confirm_delete', lang)} "${this._deleteAlarmName}"?
+          </p>
+          <div class="form-actions">
+            <button type="button" @click=${this._handleDeleteAlarmCancel}>
+              ${localize('alarm.confirm_delete_no', lang)}
+            </button>
+            <button type="button" @click=${this._handleDeleteAlarmConfirm} class="delete">
+              ${localize('alarm.confirm_delete_yes', lang)}
+            </button>
+          </div>
+        </div>
+      </dialog>
+    `;
+  }
+
+  /**
    * Render the complete card
    * Combines all sections based on configuration
    * @returns Template result for the entire card
    */
-  protected render(): TemplateResult {
+  protected override render(): TemplateResult {
     if (!this._config || !this.hass) {
       return html``;
+    }
+
+    const hasAnyEntity = Object.values(this._entities).some(
+      (v): v is string => v !== undefined,
+    );
+    const hasAlarms = this._alarms.length > 0;
+    if (!hasAnyEntity && !hasAlarms) {
+      const lang = this._getLanguage();
+      return html`
+        <ha-card>
+          <div class="error">
+            <ha-icon icon="mdi:alert-outline"></ha-icon>
+            <div>${localize('error.no_entities', lang)}</div>
+          </div>
+        </ha-card>
+      `;
     }
 
     return html`
       <ha-card>
         ${this._renderHeader()}
-        ${this._config.show_face_selector ? this._renderFaceSelector() : ''}
-        ${this._config.show_controls ? this._renderLightControls() : ''}
-        ${this._config.show_controls ? this._renderDeviceSettings() : ''}
-        ${this._config.show_temperature_graph ? this._renderTemperatureGraph() : ''}
-        ${this._config.show_connectivity ? this._renderConnectivity() : ''}
+        ${this._sections.map((section) =>
+          this._renderSection(section, this._renderSectionBody(section)),
+        )}
+        ${this._renderAddAlarmDialog()}
+        ${this._renderDeleteConfirmationDialog()}
       </ha-card>
     `;
   }
 
-  static get styles() {
+  static override get styles() {
     return css`
       :host {
         display: block;
@@ -856,10 +1621,76 @@ export class RemiCard extends LitElement {
         margin-bottom: 0;
       }
 
+      /* Collapsible sections */
+      .section.collapsible {
+        margin-bottom: 12px;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--divider-color);
+        background: var(--card-background-color);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--secondary-background-color);
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+
+      .section-header:hover {
+        background: var(--divider-color);
+      }
+
+      .section-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: none;
+        border: none;
+        padding: 0;
+        font: inherit;
+        color: var(--primary-text-color);
+        cursor: pointer;
+      }
+
+      .section-toggle ha-icon {
+        --mdc-icon-size: 20px;
+      }
+
       .section-title {
         font-weight: bold;
-        margin-bottom: 8px;
-        font-size: 1em;
+        font-size: 0.95em;
+        margin: 0;
+      }
+
+      .section-summary {
+        font-size: 0.85em;
+        color: var(--secondary-text-color);
+        white-space: nowrap;
+      }
+
+      .section-summary.clickable {
+        cursor: pointer;
+      }
+
+      .section-summary.clickable:hover {
+        text-decoration: underline;
+      }
+
+      .chevron {
+        transition: transform 0.2s ease;
+      }
+
+      .section.collapsed .chevron {
+        transform: rotate(-90deg);
+      }
+
+      .section-title {
+        margin-bottom: 0;
       }
 
       .light-slider-container {
@@ -1151,6 +1982,281 @@ export class RemiCard extends LitElement {
       .connectivity-item ha-icon {
         --mdc-icon-size: 20px;
       }
+
+      .alarms-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        background: var(--secondary-background-color);
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+
+      .alarms-section-header:hover {
+        background: var(--divider-color);
+      }
+
+      .alarms-section-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: bold;
+        font-size: 1em;
+      }
+
+      .alarms-section-title ha-icon {
+        --mdc-icon-size: 20px;
+      }
+
+      .alarms-section-header > ha-icon {
+        --mdc-icon-size: 24px;
+        color: var(--secondary-text-color);
+      }
+
+      .alarms-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 8px;
+      }
+
+      .alarm-card {
+        padding: 12px;
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        background: var(--card-background-color);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .alarm-card.disabled {
+        opacity: 0.6;
+      }
+
+      .alarm-card:hover {
+        background: var(--secondary-background-color);
+        transform: translateY(-2px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .alarm-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .alarm-time-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .alarm-time {
+        font-size: 1.8em;
+        font-weight: bold;
+        color: var(--primary-text-color);
+        line-height: 1;
+      }
+
+      .alarm-name {
+        font-size: 1em;
+        color: var(--secondary-text-color);
+      }
+
+      .alarm-card ha-switch {
+        flex-shrink: 0;
+      }
+
+      .alarm-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .alarm-detail-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        background: var(--secondary-background-color);
+        font-size: 0.85em;
+      }
+
+      .alarm-detail-item ha-icon {
+        --mdc-icon-size: 16px;
+        color: var(--primary-color);
+      }
+
+      .alarm-detail-item span {
+        color: var(--secondary-text-color);
+      }
+
+      .alarm-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .alarm-actions ha-icon-button {
+        --mdc-icon-size: 20px;
+        color: var(--secondary-text-color);
+      }
+
+      .alarm-actions ha-icon-button:hover {
+        color: var(--primary-color);
+      }
+
+      .alarm-actions ha-icon-button.delete:hover,
+      .alarm-actions ha-icon-button[icon="mdi:delete-outline"]:hover {
+        color: var(--error-color, #f44336);
+      }
+
+      /* --- Add alarm / delete confirmation dialogs --- */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 100;
+        backdrop-filter: blur(2px);
+      }
+
+      .modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--card-background-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        padding: 20px;
+        min-width: 320px;
+        max-width: 480px;
+        max-height: 90vh;
+        overflow-y: auto;
+        z-index: 101;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      .modal h3 {
+        margin: 0 0 16px 0;
+        font-size: 1.25em;
+        font-weight: bold;
+        color: var(--primary-text-color);
+      }
+
+      .modal p {
+        margin: 0 0 16px 0;
+        color: var(--primary-text-color);
+      }
+
+      .form-field {
+        margin-bottom: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .form-field label {
+        font-size: 0.9em;
+        font-weight: 500;
+        color: var(--primary-text-color);
+      }
+
+      .form-field input[type="text"],
+      .form-field input[type="time"] {
+        padding: 8px;
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.95em;
+      }
+
+      .form-field input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+      }
+
+      .form-field.days label {
+        align-items: center;
+        flex-direction: row;
+        gap: 8px;
+        margin-bottom: 0;
+      }
+
+      .day-checkboxes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .day-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85em;
+        cursor: pointer;
+      }
+
+      .day-checkbox input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+      }
+
+      .form-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--divider-color);
+      }
+
+      .form-actions button {
+        padding: 8px 16px;
+        border: 1px solid var(--divider-color);
+        border-radius: 6px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        font-size: 0.9em;
+        cursor: pointer;
+      }
+
+      .form-actions button:hover {
+        background: var(--secondary-background-color);
+      }
+
+      .form-actions button.delete {
+        border-color: var(--error-color, #f44336);
+        color: var(--error-color, #f44336);
+      }
+
+      .form-actions button.delete:hover {
+        background: var(--error-color, #f44336);
+        color: var(--card-background-color);
+      }
+
+      .error {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 24px;
+        text-align: center;
+        color: var(--secondary-text-color);
+      }
+
+      .error ha-icon {
+        --mdc-icon-size: 48px;
+        color: var(--error-color, #f44336);
+      }
     `;
   }
 }
@@ -1168,5 +2274,29 @@ window.customCards.push({
   name: 'Rémi Card',
   description: 'A card for displaying and controlling Rémi UrbanHello baby sleep trainer devices',
   preview: false,
-  documentationURL: 'https://github.com/yourusername/remi-card',
+  documentationURL: 'https://github.com/homeassistant-fr-ecosystem/remi-card',
+  getEntitySuggestion: (hass: HomeAssistant, entityId: string) => {
+    if (!hass?.entities?.[entityId]) {
+      return null;
+    }
+    const platform = hass.entities[entityId].platform;
+    if (platform !== 'urbanhello_remi') {
+      return null;
+    }
+    // Suggest the card for the main device entities.
+    const prefixes = ['select.', 'light.', 'sensor.', 'binary_sensor.', 'time.'];
+    if (!prefixes.some((p) => entityId.startsWith(p))) {
+      return null;
+    }
+    return { config: { type: 'custom:remi-card', device_id: entityId.split('.')[1] } };
+  },
 });
+
+// Version banner: makes it obvious in the browser console which build is loaded
+// when a user reports an issue.
+// eslint-disable-next-line no-console
+console.info(
+  `%c REMI-CARD %c v1.0.0 `,
+  'color:#fff;background:#ff6d00;font-weight:700;border-radius:4px 0 0 4px;',
+  'color:#ff6d00;background:transparent;font-weight:700;border-radius:0 4px 4px 0;',
+);

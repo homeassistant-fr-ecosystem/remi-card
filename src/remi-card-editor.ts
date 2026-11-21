@@ -1,57 +1,46 @@
-/**
- * Configuration editor for the Rémi Card
- * Provides a UI to configure the card settings in the Lovelace editor
- */
-
-import { LitElement, html, css, TemplateResult } from 'lit';
+import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant } from 'custom-card-helpers';
 import { localize } from './localize';
+import { RemiCardConfig, type SectionId } from './types';
+import { SECTION_IDS } from './remi-card';
 
-/**
- * Configuration interface for the Rémi Card
- */
-interface RemiCardConfig {
-  type: string;
-  device_id: string;
-  device_name?: string;
-  title?: string;
-  show_controls?: boolean;
-  show_face_selector?: boolean;
-  show_temperature_graph?: boolean;
-  show_connectivity?: boolean;
-  hours_to_show?: number;
+const SECTION_LABEL_KEYS: Record<SectionId, string> = {
+  face_selector: 'editor.section.face_selector',
+  light_controls: 'editor.section.light_controls',
+  alarms: 'editor.section.alarms',
+  device_settings: 'editor.section.device_settings',
+  device_info: 'editor.section.device_info',
+  temperature_graph: 'editor.section.temperature_graph',
+  connectivity: 'editor.section.connectivity',
+};
+
+interface AnchorOption {
+  id: string;
+  name: string;
 }
 
-/**
- * Editor component for configuring Rémi Card settings
- */
 @customElement('remi-card-editor')
 export class RemiCardEditor extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @state() private _config!: RemiCardConfig;
 
-  /**
-   * Set the configuration for the card
-   * @param config - The card configuration object
-   */
+  private readonly _datalistId = `remi-entities-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+
   public setConfig(config: RemiCardConfig): void {
     this._config = config;
   }
 
-  /**
-   * Get the user's language from Home Assistant
-   * @returns The language code (e.g., "en", "fr")
-   */
   private _getLanguage(): string {
     return this.hass?.locale?.language || this.hass?.language || 'en';
   }
 
-  /**
-   * Handle value changes from form inputs
-   * Dispatches a 'config-changed' event with the updated configuration
-   * @param ev - The custom event containing the changed value
-   */
+  private _t(key: string): string {
+    return localize(key, this._getLanguage());
+  }
+
   private _valueChanged(ev: CustomEvent): void {
     if (!this._config || !this.hass) {
       return;
@@ -66,7 +55,9 @@ export class RemiCardEditor extends LitElement {
     if (target.configValue) {
       const newConfig = {
         ...this._config,
-        [target.configValue]: target.checked !== undefined ? target.checked : value,
+        [target.configValue]: target.checked !== undefined
+          ? target.checked
+          : value,
       };
 
       const event = new CustomEvent('config-changed', {
@@ -78,26 +69,103 @@ export class RemiCardEditor extends LitElement {
     }
   }
 
-  /**
-   * Render the configuration editor UI
-   * @returns Template result containing the editor form
-   */
-  protected render(): TemplateResult {
-    if (!this.hass || !this._config) {
-      return html``;
+  /** Anchor candidates: every urbanhello_remi entity the frontend knows about. */
+  private get _anchorOptions(): AnchorOption[] {
+    const hass = this.hass;
+    const entities = hass?.entities ?? {};
+    if (!entities) {
+      return [];
     }
+    return Object.keys(entities)
+      .filter(
+        (id) =>
+          entities[id]?.platform === 'urbanhello_remi' &&
+          hass?.states[id],
+      )
+      .map((id) => ({ id, name: this._nameFor(id) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
 
+  private _nameFor(id: string): string {
+    const state = this.hass?.states[id];
+    if (state && this.hass && typeof this.hass.formatEntityName === 'function') {
+      const formatted = this.hass.formatEntityName(state);
+      if (formatted) {
+        return formatted;
+      }
+    }
+    return state?.attributes.friendly_name ?? id;
+  }
+
+  private _update(patch: Partial<RemiCardConfig>): void {
+    if (!this._config) {
+      return;
+    }
+    const config: RemiCardConfig = { ...this._config, ...patch };
+    this.dispatchEvent(
+      new CustomEvent('config-changed', {
+        detail: { config },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private get _selectedSections(): SectionId[] {
+    const configured = this._config.sections;
+    return configured && configured.length
+      ? configured
+      : [...SECTION_IDS];
+  }
+
+  private _toggleSection(id: SectionId, checked: boolean): void {
+    const current = this._selectedSections;
+    const next = checked
+      ? [...new Set([...current, id])]
+      : current.filter((section) => section !== id);
+    this._update({ sections: next });
+  }
+
+  private get _expandedSections(): SectionId[] {
+    const configured = this._config.expanded_sections;
+    return configured ? configured : [...SECTION_IDS];
+  }
+
+  private _toggleExpanded(id: SectionId, checked: boolean): void {
+    const current = this._expandedSections;
+    const next = checked
+      ? [...new Set([...current, id])]
+      : current.filter((section) => section !== id);
+    this._update({ expanded_sections: next });
+  }
+
+  protected override render(): TemplateResult | typeof nothing {
+    if (!this.hass || !this._config) {
+      return nothing;
+    }
+    const options = this._anchorOptions;
     const lang = this._getLanguage();
 
     return html`
       <div class="card-config">
-        <div class="option">
-          <ha-textfield
-            label="${localize('editor.device_id', lang)}"
-            .value=${this._config.device_id || ''}
-            .configValue=${'device_id'}
-            @input=${this._valueChanged}
-          ></ha-textfield>
+        <div class="field">
+          <label class="title">${this._t('editor.anchor')}</label>
+          <input
+            type="text"
+            list=${this._datalistId}
+            .value=${this._config.device_id ?? ''}
+            placeholder="garance"
+            @change=${(ev: Event) =>
+              this._update({
+                device_id: (ev.target as HTMLInputElement).value || undefined,
+              })}
+          />
+          <datalist id=${this._datalistId}>
+            ${options.map(
+              (o) => html`<option value=${o.id}>${o.name}</option>`,
+            )}
+          </datalist>
+          <span class="hint">${this._t('editor.anchor_hint')}</span>
         </div>
 
         <div class="option">
@@ -107,6 +175,63 @@ export class RemiCardEditor extends LitElement {
             .configValue=${'device_name'}
             @input=${this._valueChanged}
           ></ha-textfield>
+        </div>
+
+        <div class="option">
+          <ha-textfield
+            label="${localize('editor.device_prefix', lang)}"
+            .value=${this._config.device_prefix || ''}
+            .configValue=${'device_prefix'}
+            @input=${this._valueChanged}
+          ></ha-textfield>
+        </div>
+
+        <div class="option">
+          <ha-textfield
+            label="${localize('editor.title', lang)}"
+            .value=${this._config.title || ''}
+            .configValue=${'title'}
+            @input=${this._valueChanged}
+          ></ha-textfield>
+        </div>
+
+        <div class="field">
+          <label class="title">${this._t('editor.sections')}</label>
+          ${SECTION_IDS.map(
+            (id) => html`<div class="checkbox-row">
+              <input
+                id=${`section-${id}`}
+                type="checkbox"
+                .checked=${this._selectedSections.includes(id)}
+                @change=${(ev: Event) =>
+                  this._toggleSection(
+                    id,
+                    (ev.target as HTMLInputElement).checked,
+                  )}
+              />
+              <label for=${`section-${id}`}>${this._t(SECTION_LABEL_KEYS[id])}</label>
+            </div>`,
+          )}
+        </div>
+
+        <div class="field">
+          <label class="title">${this._t('editor.expanded_sections')}</label>
+          ${SECTION_IDS.map(
+            (id) => html`<div class="checkbox-row">
+              <input
+                id=${`expanded-${id}`}
+                type="checkbox"
+                .checked=${this._expandedSections.includes(id)}
+                @change=${(ev: Event) =>
+                  this._toggleExpanded(
+                    id,
+                    (ev.target as HTMLInputElement).checked,
+                  )}
+              />
+              <label for=${`expanded-${id}`}>${this._t(SECTION_LABEL_KEYS[id])}</label>
+            </div>`,
+          )}
+          <span class="hint">${this._t('editor.expanded_sections_hint')}</span>
         </div>
 
         <div class="option">
@@ -150,6 +275,16 @@ export class RemiCardEditor extends LitElement {
         </div>
 
         <div class="option">
+          <ha-formfield label="${localize('editor.show_alarm_clocks', lang)}">
+            <ha-switch
+              .checked=${this._config.show_alarm_clocks !== false}
+              .configValue=${'show_alarm_clocks'}
+              @change=${this._valueChanged}
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+
+        <div class="option">
           <ha-textfield
             label="${localize('editor.hours_to_show', lang)}"
             type="number"
@@ -162,7 +297,7 @@ export class RemiCardEditor extends LitElement {
     `;
   }
 
-  static get styles() {
+  static override get styles() {
     return css`
       .card-config {
         display: flex;
@@ -173,6 +308,46 @@ export class RemiCardEditor extends LitElement {
       .option {
         display: flex;
         flex-direction: column;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      label.title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--secondary-text-color);
+      }
+
+      input[type='text'] {
+        font: inherit;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.2));
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+      }
+
+      .switch-row,
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 0;
+      }
+
+      .checkbox-row input {
+        accent-color: var(--primary-color);
+        width: 18px;
+        height: 18px;
+      }
+
+      .hint {
+        font-size: 0.78rem;
+        color: var(--secondary-text-color);
       }
 
       ha-textfield {

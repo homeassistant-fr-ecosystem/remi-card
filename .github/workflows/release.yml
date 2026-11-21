@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to create (e.g. v1.0.0)"
+        required: true
+        type: string
+      release_title:
+        description: "Release title (defaults to the tag name)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark this release as a pre-release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # HACS looks for an asset named after the repository ("remi-card.js"),
+      # so stage the built bundle at the workspace root before uploading it.
+      - name: Stage release asset
+        run: cp dist/remi-card.js remi-card.js
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          makeLatest: true
+          artifacts: "remi-card.js"
+          generateReleaseNotes: true
+          tag: ${{ inputs.tag_name }}
+          commit: ${{ github.sha }}
+          name: ${{ inputs.release_title || inputs.tag_name }}
+          prerelease: ${{ inputs.prerelease }}
+          draft: false

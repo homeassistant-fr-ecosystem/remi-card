@@ -8,11 +8,17 @@
     "turn_off": "Éteindre"
   },
   "face": {
-    "sleepyFace": "Sommeil",
-    "semiAwakeFace": "Semi-éveil",
-    "awakeFace": "Éveil",
-    "smilyFace": "Sourire",
-    "blankFace": "Neutre"
+    "sleepy_face": "Sommeil",
+    "semi_awake_face": "Semi-éveil",
+    "awake_face": "Éveil",
+    "smily_face": "Sourire",
+    "blank_face": "Neutre"
+  },
+  "face_selector": {
+    "title": "Sélecteur de visages"
+  },
+  "light_controls": {
+    "title": "Veilleuse"
   },
   "connectivity": {
     "connected": "Connecté",
@@ -20,7 +26,12 @@
     "not_available": "Connectivité indisponible. Activez l'entité de connectivité dans les réglages de l'intégration."
   },
   "firmware": {
-    "version": "Version du firmware"
+    "version": "Version du firmware",
+    "update_available": "Mise à jour disponible",
+    "up_to_date": "À jour"
+  },
+  "device_info": {
+    "title": "Informations appareil"
   },
   "settings": {
     "title": "Réglages appareil"
@@ -40,13 +51,56 @@
     "title": "Température",
     "click_for_history": "Cliquez pour voir l'historique"
   },
+  "alarm": {
+    "title": "Réveils",
+    "no_repeat": "Unique",
+    "add_alarm": "Ajouter un réveil",
+    "delete_alarm": "Supprimer le réveil",
+    "trigger_alarm": "Tester le réveil",
+    "update_alarm": "Mettre à jour le réveil",
+    "snooze_alarm": "Répéter le réveil",
+    "time": "Heure",
+    "enabled": "Activé",
+    "confirm_delete": "Êtes-vous sûr de vouloir supprimer ce réveil ?",
+    "confirm_delete_yes": "Confirmer la suppression",
+    "confirm_delete_no": "Annuler",
+    "new_alarm_name": "Nouveau réveil",
+    "days": {
+      "title": "Jours",
+      "0": "Lun",
+      "1": "Mar",
+      "2": "Mer",
+      "3": "Jeu",
+      "4": "Ven",
+      "5": "Sam",
+      "6": "Dim"
+    }
+  },
+  "error": {
+    "no_entities": "Aucune entité Rémi trouvée. Vérifiez la configuration de l'appareil."
+  },
   "editor": {
-    "device_id": "ID de l'appareil (ex: garance)",
+    "anchor": "Entité de l'appareil",
+    "anchor_hint": "Choisissez une entité Rémi (ex: light.garance_night_light). La carte trouve les autres entités du même appareil.",
+    "title": "Titre de la carte (optionnel)",
+    "sections": "Sections à afficher",
+    "expanded_sections": "Sections ouvertes par défaut",
+    "expanded_sections_hint": "Les sections fermées affichent un résumé et peuvent être ouvertes depuis la carte.",
+    "section.face_selector": "Sélecteur de visages",
+    "section.light_controls": "Veilleuse",
+    "section.alarms": "Réveils",
+    "section.device_settings": "Réglages appareil",
+    "section.device_info": "Informations appareil",
+    "section.temperature_graph": "Graphique de température",
+    "section.connectivity": "Connectivité",
+    "device_id": "Device ID de l'appareil (ex: 92474ef24f3f053a9380bff6cba5cc82)",
+    "device_prefix": "Préfixe de l'appareil (ex: garance)",
     "device_name": "Nom de l'appareil (optionnel)",
     "show_face_selector": "Afficher le sélecteur de visages",
     "show_controls": "Afficher les contrôles de lumière",
     "show_temperature_graph": "Afficher le graphique de température",
     "show_connectivity": "Afficher la connectivité",
+    "show_alarm_clocks": "Afficher les réveils",
     "hours_to_show": "Heures à afficher dans le graphique"
   }
 }
