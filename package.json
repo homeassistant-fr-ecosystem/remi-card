@@ -1,6 +1,6 @@
 {
   "name": "remi-card",
-  "version": "1.0.1-b12",
+  "version": "1.0.1-b13",
   "description": "A custom card for displaying Rémi UrbanHello device data in Home Assistant",
   "type": "module",
   "module": "dist/remi-card.js",
