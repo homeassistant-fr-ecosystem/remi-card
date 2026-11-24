@@ -586,27 +586,11 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Get the RSSI sensor state
-   * @returns The sensor entity state object or undefined if not found
-   */
-  private _getRssiState(): SensorEntity | undefined {
-    return this._getState(this._entities.rssi) as SensorEntity | undefined;
-  }
-
-  /**
    * Get the ambient luminosity sensor state
    * @returns The sensor entity state object or undefined if not found
    */
   private _getLuminosityState(): SensorEntity | undefined {
     return this._getState(this._entities.luminosity) as SensorEntity | undefined;
-  }
-
-  /**
-   * Get the firmware version sensor state
-   * @returns The sensor entity state object or undefined if not found
-   */
-  private _getFirmwareVersionState(): SensorEntity | undefined {
-    return this._getState(this._entities.firmware_version) as SensorEntity | undefined;
   }
 
   /**
@@ -623,22 +607,6 @@ export class RemiCard extends LitElement {
    */
   private _getMusicModeState(): SelectEntity | undefined {
     return this._getState(this._entities.music_mode) as SelectEntity | undefined;
-  }
-
-  /**
-   * Get the noise threshold number state
-   * @returns The number entity state object or undefined if not found
-   */
-  private _getNoiseThresholdState(): SensorEntity | undefined {
-    return this._getState(this._entities.noise_threshold) as SensorEntity | undefined;
-  }
-
-  /**
-   * Get the night face level number state
-   * @returns The number entity state object or undefined if not found
-   */
-  private _getNightFaceLevelState(): SensorEntity | undefined {
-    return this._getState(this._entities.night_face_level) as SensorEntity | undefined;
   }
 
   /**
@@ -1023,8 +991,6 @@ export class RemiCard extends LitElement {
    */
   private _renderConnectivity(): TemplateResult {
     const connectivityState = this._getConnectivityState();
-    const rssiState = this._getRssiState();
-    const firmwareState = this._getFirmwareVersionState();
 
     if (!connectivityState || connectivityState.state === 'unavailable') {
       const lang = getLanguage(this.hass);
