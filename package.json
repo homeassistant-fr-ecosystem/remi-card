@@ -23,6 +23,7 @@
     "lint": "eslint src",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -43,6 +44,8 @@
     "happy-dom": "^21.0.4",
     "rollup": "^4.68.6",
     "tslib": "^2.9.1",
+    "@playwright/test": "^1.65.1",
+    "playwright": "^1.53.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.4",
     "vitest": "^5.1.1"

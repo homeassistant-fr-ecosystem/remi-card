@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rémi Card — Screenshot light/dark</title>
+  <script type="module" src="/dist/remi-card.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html {
+      --primary-color: #03a9f4;
+      --primary-text-color: #212121;
+      --secondary-text-color: #757575;
+      --card-background-color: #ffffff;
+      --secondary-background-color: #fafafa;
+      --divider-color: #e0e0e0;
+      --success-color: #4caf50;
+      --error-color: #f44336;
+      --warning-color: #ff9800;
+      --info-color: #2196f3;
+      --state-climate-heat-color: #ff9800;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    html.dark {
+      --primary-text-color: #ffffff;
+      --secondary-text-color: #bdbdbd;
+      --card-background-color: #303030;
+      --secondary-background-color: #424242;
+      --divider-color: #616161;
+      background: #303030;
+      color: #ffffff;
+    }
+    body { padding: 20px; background: var(--secondary-background-color); }
+    #container { max-width: 420px; min-height: 300px; }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+  <script>
+    // --- Minimal stand-ins for Home Assistant frontend elements (ha-*) so the
+    // card renders standalone outside of Home Assistant. ---
+    const ICON_EMOJI = {
+      'chevron-down': '▼', 'chevron-right': '▶',
+      'wifi': '📶', 'wifi-off': '📴', 'wifi-strength-3': '📶',
+      'lightbulb': '💡', 'lightbulb-outline': '💡',
+      'alarm-multiple': '⏰', 'alarm': '🔔', 'pause': '⏸️',
+      'pencil': '✏️', 'delete-outline': '🗑️', 'plus': '➕',
+      'alert-outline': '⚠️', 'alert-circle': '⚠️',
+      'chip': '💾', 'ip-network': '🌐', 'bell': '🔔',
+      'brightness-6': '🔆', 'volume-high': '🔊',
+      'calendar-repeat': '📅', 'calendar-blank': '📅',
+      'emoticon': '😊',
+    };
+
+    function emojiFor(icon) {
+      const name = (icon || '').split(':').pop();
+      return ICON_EMOJI[name] || '●';
+    }
+
+    class HaCard extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: 'open' }); }
+      connectedCallback() {
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host { display: block; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); background: var(--card-background-color, #fff); padding: 16px; box-sizing: border-box; font-family: inherit; }
+          </style>
+          <slot></slot>`;
+      }
+    }
+    customElements.define('ha-card', HaCard);
+
+    class HaIcon extends HTMLElement {
+      static get observedAttributes() { return ['icon']; }
+      constructor() { super(); this.attachShadow({ mode: 'open' }); }
+      connectedCallback() { this.render(); }
+      attributeChangedCallback() { this.render(); }
+      render() {
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host { display: inline-block; width: 24px; height: 24px; vertical-align: middle; line-height: 1; font-size: 20px; }
+          </style>
+          <span>${emojiFor(this.getAttribute('icon'))}</span>`;
+      }
+    }
+    customElements.define('ha-icon', HaIcon);
+
+    class HaIconButton extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: 'open' }); }
+      connectedCallback() {
+        const icon = this.getAttribute('icon') || '';
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host { display: inline-block; }
+            button { background: transparent; border: none; border-radius: 6px; width: 36px; height: 36px; cursor: pointer; font-size: 18px; display: inline-flex; align-items: center; justify-content: center; }
+            button:hover { background: rgba(0,0,0,0.06); }
+          </style>
+          <button aria-label="${icon}" part="button">${emojiFor(icon)}</button>`;
+        this.shadowRoot.querySelector('button').addEventListener('click', (e) => {
+          this.dispatchEvent(new Event('click', { bubbles: true, composed: true }));
+        });
+      }
+    }
+    customElements.define('ha-icon-button', HaIconButton);
+
+    class HaSwitch extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: 'open' }); }
+      connectedCallback() {
+        const checked = this.hasAttribute('checked');
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host { display: inline-block; }
+            label { position: relative; display: inline-block; width: 40px; height: 22px; }
+            input { opacity: 0; width: 0; height: 0; }
+            slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; transition: .2s; border-radius: 22px; }
+            slider:before { position: absolute; content: ''; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; transition: .2s; border-radius: 50%; }
+            input:checked + slider { background: var(--primary-color, #03a9f4); }
+            input:checked + slider:before { transform: translateX(18px); }
+          </style>
+          <label>
+            <input type="checkbox" ${checked ? 'checked' : ''} />
+            <slider part="slider"></slider>
+          </label>`;
+        this.shadowRoot.querySelector('input').addEventListener('change', (e) => {
+          this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        });
+      }
+    }
+    customElements.define('ha-switch', HaSwitch);
+
+    async function main() {
+      const tagName = 'remi-card';
+      while (!customElements.get(tagName)) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      const card = document.createElement(tagName);
+      card.hass = {
+        // Entités nommées au format attendu par discoverEntities (base = device_id = 'garance',
+        // suffixe `.garance_<role>`) et annotées avec translation_key comme l'intégration urbaine.
+        states: {
+          'select.garance_face': { state: 'awake_face', attributes: { translation_key: 'face', options: ['sleepy_face','awake_face','semi_awake_face','smily_face','blank_face'], friendly_name: 'Face' } },
+          'light.garance_night_light': { state: 'on', attributes: { translation_key: 'night_light', brightness: 153, friendly_name: 'Veilleuse', supported_features: 1 } },
+          'sensor.garance_temperature': { state: '21.5', attributes: { translation_key: 'temperature', unit_of_measurement: '°C', device_class: 'temperature', friendly_name: 'Température' } },
+          'sensor.garance_luminosity': { state: '120', attributes: { translation_key: 'luminosity', unit_of_measurement: 'lx', device_class: 'illuminance', friendly_name: 'Luminosité' } },
+          'binary_sensor.garance_connectivity': { state: 'on', attributes: { translation_key: 'connectivity', device_class: 'connectivity', friendly_name: 'Connectivité' } },
+          'sensor.garance_rssi': { state: '-45', attributes: { translation_key: 'rssi', unit_of_measurement: 'dBm', friendly_name: 'RSSI' } },
+          'sensor.garance_ip_address': { state: '192.168.1.42', attributes: { translation_key: 'ip_address', friendly_name: 'Adresse IP' } },
+          'binary_sensor.garance_alive': { state: 'on', attributes: { translation_key: 'alive', device_class: 'connectivity', friendly_name: 'En ligne' } },
+          'binary_sensor.garance_firmware_update': { state: 'off', attributes: { translation_key: 'firmware_update', device_class: 'update', friendly_name: 'Mise à jour firmware' } },
+          'sensor.garance_firmware_version': { state: '2.3.1', attributes: { translation_key: 'firmware_version', friendly_name: 'Version firmware' } },
+          'number.garance_volume': { state: '30', attributes: { translation_key: 'volume', min: 0, max: 100, unit_of_measurement: '%', friendly_name: 'Volume' } },
+          'number.garance_noise_threshold': { state: '70', attributes: { translation_key: 'noise_threshold', min: 0, max: 100, unit_of_measurement: '%', friendly_name: 'Seuil de bruit' } },
+          'number.garance_night_face_level': { state: '40', attributes: { translation_key: 'night_face_level', min: 0, max: 100, unit_of_measurement: '%', friendly_name: 'Niveau face nuit' } },
+          'select.garance_clock_format': { state: '24h', attributes: { translation_key: 'clock_format', options: ['12h','24h'], friendly_name: 'Format horloge' } },
+          'select.garance_music_mode': { state: 'off', attributes: { translation_key: 'music_mode', options: ['off','music','white_noise'], friendly_name: 'Mode musique' } },
+          'time.garance_wake_up_time': { state: '07:30', attributes: { translation_key: 'wake_up_time', name: 'Réveil', days: [1,2,3,4,5], face: 'awake_face', brightness: 100, volume: 80, days_indices: [1,2,3,4,5], friendly_name: 'Réveil' } },
+          'switch.garance_wake_up': { state: 'on', attributes: { translation_key: 'wake_up', friendly_name: 'Réveil' } },
+        },
+        entities: {},
+        services: {},
+        translate: (key, options) => key,
+        connection: { subscribeMessage: () => () => {} },
+        language: 'fr',
+        locale: { language: 'fr' },
+      };
+
+      try {
+        card.setConfig({
+          device_id: 'garance',
+          device_name: 'Garance',
+          show_face_selector: true,
+          show_controls: true,
+          show_temperature_graph: true,
+          show_connectivity: true,
+          show_alarm_clocks: true,
+          hours_to_show: 24,
+        });
+      } catch (e) {
+        console.error('setConfig error:', e.message);
+      }
+
+      document.getElementById('container').appendChild(card);
+      await card.updateComplete;
+    }
+
+    main().catch(console.error);
+  </script>
+</body>
+</html>

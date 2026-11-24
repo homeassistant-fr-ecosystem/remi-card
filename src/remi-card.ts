@@ -245,6 +245,16 @@ export class RemiCard extends LitElement {
     return Math.min(12, Math.max(5, 2 + sectionCount));
   }
 
+  /**
+   * Get the grid options for Lovelace card layout.
+   * The card adapts to a 2-column grid by default, letting Home Assistant
+   * size it appropriately within a view.
+   * @returns Grid layout options
+   */
+  public getGridOptions(): { columns: number } {
+    return { columns: 2 };
+  }
+
   public override connectedCallback(): void {
     super.connectedCallback();
     this._requestStatesContext();

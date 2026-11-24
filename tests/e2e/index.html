@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rémi Card — E2E smoke test</title>
+    <script type="module" src="/dist/remi-card.js"></script>
+  </head>
+  <body>
+    <div id="result"></div>
+    <script>
+      // Wait a bit for the module to execute, then check
+      setTimeout(() => {
+        const tag = customElements.get('remi-card');
+        if (tag) {
+          result.textContent = 'custom element defined: OK';
+        } else {
+          result.textContent = 'custom element defined: MISSING';
+        }
+      }, 100);
+    </script>
+  </body>
+</html>
