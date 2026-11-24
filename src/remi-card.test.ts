@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RemiCard } from './remi-card';
 import { normalizeDeviceId, configBase, slugify } from './entities';
 import en from '../src/translations/en.json';
@@ -197,5 +197,136 @@ describe('i18n key consistency', () => {
     for (const key of enKeys) {
       expect(frKeySet.has(key)).toBe(true);
     }
+  });
+});
+
+describe('RemiCard service calls', () => {
+  it('_callService should call hass.callService with correct args', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._callService('light', 'turn_on', { entity_id: 'light.test' });
+    expect(hass.callService).toHaveBeenCalledWith(
+      'light',
+      'turn_on',
+      { entity_id: 'light.test' },
+      undefined,
+    );
+  });
+
+  it('_callService should store error when hass.callService throws', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn(() => { throw new Error('boom'); }) };
+    (card as any).hass = hass;
+    (card as any)._callService('light', 'turn_on', { entity_id: 'light.test' });
+    expect((card as any)._serviceError).toBe('boom');
+  });
+
+  it('_callService should show unavailable message when hass is missing', () => {
+    const card = new RemiCard();
+    (card as any).hass = undefined;
+    (card as any)._callService('light', 'turn_on', { entity_id: 'light.test' });
+    expect((card as any)._serviceError).toContain('Home Assistant');
+  });
+
+  it('_handleLightControl should call turn_off when brightness is 0', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._entities = { night_light: 'light.test' };
+    (card as any)._handleLightControl(0);
+    expect(hass.callService).toHaveBeenCalledWith('light', 'turn_off', {
+      entity_id: 'light.test',
+    }, undefined);
+  });
+
+  it('_handleLightControl should call turn_on with brightness_pct when brightness > 0', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._entities = { night_light: 'light.test' };
+    (card as any)._handleLightControl(50);
+    expect(hass.callService).toHaveBeenCalledWith('light', 'turn_on', {
+      entity_id: 'light.test',
+      brightness_pct: 50,
+    }, undefined);
+  });
+
+  it('_handleFaceSelect should convert API camelCase face to HA snake_case', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._entities = { face: 'select.test' };
+    (card as any)._handleFaceSelect('sleepyFace');
+    expect(hass.callService).toHaveBeenCalledWith('select', 'select_option', {
+      entity_id: 'select.test',
+      option: 'sleepy_face',
+    }, undefined);
+  });
+
+  it('_handleFaceSelect should pass through unknown face unchanged', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._entities = { face: 'select.test' };
+    (card as any)._handleFaceSelect('customFace');
+    expect(hass.callService).toHaveBeenCalledWith('select', 'select_option', {
+      entity_id: 'select.test',
+      option: 'customFace',
+    }, undefined);
+  });
+
+  it('_brightnessToPercent should convert 0-255 to 0-100', () => {
+    const card = new RemiCard();
+    expect((card as any)._brightnessToPercent(255)).toBe(100);
+    expect((card as any)._brightnessToPercent(0)).toBe(0);
+    expect((card as any)._brightnessToPercent(128)).toBe(50);
+    expect((card as any)._brightnessToPercent(1)).toBe(0);
+  });
+
+  it('_getTypedState should return typed entity state', () => {
+    const card = new RemiCard();
+    const hass = {
+      states: { 'light.test': { state: 'on', attributes: { brightness: 128 } } },
+    };
+    (card as any).hass = hass;
+    const result = (card as any)._getTypedState('light.test');
+    expect(result?.state).toBe('on');
+    expect(result?.attributes.brightness).toBe(128);
+  });
+
+  it('_getTypedState should return undefined for missing entity', () => {
+    const card = new RemiCard();
+    const hass = { states: {} };
+    (card as any).hass = hass;
+    const result = (card as any)._getTypedState('light.missing');
+    expect(result).toBeUndefined();
+  });
+
+  it('_handleSliderRelease should ignore invalid values', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._entities = { night_light: 'light.test' };
+    const mockEvent = {
+      target: { value: 'not-a-number' },
+    } as unknown as Event;
+    (card as any)._handleSliderRelease(mockEvent);
+    expect(hass.callService).not.toHaveBeenCalled();
+  });
+
+  it('_handleSliderRelease should call light control with parsed value', () => {
+    const card = new RemiCard();
+    const hass = { callService: vi.fn() };
+    (card as any).hass = hass;
+    (card as any)._entities = { night_light: 'light.test' };
+    const mockEvent = {
+      target: { value: '75' },
+    } as unknown as Event;
+    (card as any)._handleSliderRelease(mockEvent);
+    expect(hass.callService).toHaveBeenCalledWith('light', 'turn_on', {
+      entity_id: 'light.test',
+      brightness_pct: 75,
+    }, undefined);
   });
 });

@@ -1,6 +1,6 @@
 /**
- * Helpers i18n partagés entre la carte et son éditeur.
- * Évite la duplication de _getLanguage() / _t() dans les deux composants.
+ * Shared i18n helpers between the card and its editor.
+ * Avoids duplication of _getLanguage() / _t() across both components.
  */
 
 import type { HomeAssistant } from 'custom-card-helpers';

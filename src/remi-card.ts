@@ -851,7 +851,7 @@ export class RemiCard extends LitElement {
 
   /**
    * Render a select control (label + <select> with options).
-   * Factorise le template commun entre clock_format et music_mode.
+   * Factorise the shared template between clock_format and music_mode.
    */
   private _renderSelectControl(
     labelKey: string,
@@ -1406,7 +1406,7 @@ export class RemiCard extends LitElement {
 
   /**
    * Render a modal dialog (backdrop + dialog + content + actions).
-   * Factorise la structure commune des modals (ajout / suppression alarme).
+   * Factorise the shared modal structure (add / delete alarm).
    */
   private _renderModal(
     backdropClick: () => void,
