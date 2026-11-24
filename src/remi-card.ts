@@ -158,6 +158,15 @@ interface SectionSummary {
   entityId?: string;
 }
 
+/** Interface for device info connectivity items. */
+interface DeviceInfoItem {
+  entityId: string | null | undefined;
+  translationKey?: string;
+  icon?: string;
+  labelKey?: string;
+  isBinary?: boolean;
+}
+
 /**
  * Custom Lovelace card for Rémi UrbanHello devices
  */
@@ -376,8 +385,20 @@ export class RemiCard extends LitElement {
     this._sectionOverrides = next;
   }
 
+  /** Cache the user's language to avoid repeated lookups. */
+  private _lang: string | null = null;
+
+  private _getLang(): string {
+    if (!this._lang) {
+      this._lang = getLanguage(this.hass);
+    }
+    return this._lang;
+  }
+
   /** A key value kept visible in the header of a collapsed section. */
   private _sectionSummary(section: SectionId): SectionSummary | null {
+    const lang = this._getLang();
+
     switch (section) {
       case 'light_controls': {
         const lightState = this._getLightState();
@@ -387,13 +408,13 @@ export class RemiCard extends LitElement {
         if (isOnLight && brightness !== undefined) {
           return { text: `${Math.round((brightness / 255) * 100)}%` };
         }
-        return { text: isOnLight ? t('common.on', this.hass) : t('common.off', this.hass) };
+        return { text: localize(isOnLight ? 'common.on' : 'common.off', lang) };
       }
       case 'temperature_graph': {
         const tempState = this._getTemperatureState();
         if (!isAvailable(tempState)) return null;
         return {
-          text: `${formatNumber(stateNumber(tempState), 1, getLanguage(this.hass))}°C`,
+          text: `${formatNumber(stateNumber(tempState), 1, lang)}°C`,
           entityId: this._entities.temperature,
         };
       }
@@ -402,10 +423,7 @@ export class RemiCard extends LitElement {
         if (!connectivityState) return null;
         const isConnected = connectivityState.state === 'on';
         return {
-          text: t(
-            `connectivity.${isConnected ? 'connected' : 'disconnected'}`,
-            this.hass,
-          ),
+          text: localize(`connectivity.${isConnected ? 'connected' : 'disconnected'}`, lang),
           entityId: this._entities.connectivity,
         };
       }
@@ -421,7 +439,7 @@ export class RemiCard extends LitElement {
       case 'face_selector': {
         const faceState = this._getFaceState();
         if (!faceState) return null;
-        return { text: localizeFace(faceState, getLanguage(this.hass)) };
+        return { text: localizeFace(faceState, lang) };
       }
       case 'device_settings':
       case 'device_info':
@@ -592,30 +610,6 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Get the IP address sensor state
-   * @returns The sensor entity state object or undefined if not found
-   */
-  private _getIpAddressState(): SensorEntity | undefined {
-    return this._getState(this._entities.ip_address) as SensorEntity | undefined;
-  }
-
-  /**
-   * Get the alive binary sensor state
-   * @returns The binary sensor entity state object or undefined if not found
-   */
-  private _getAliveState(): BinarySensorEntity | undefined {
-    return this._getState(this._entities.alive) as BinarySensorEntity | undefined;
-  }
-
-  /**
-   * Get the firmware update binary sensor state
-   * @returns The binary sensor entity state object or undefined if not found
-   */
-  private _getFirmwareUpdateState(): BinarySensorEntity | undefined {
-    return this._getState(this._entities.firmware_update) as BinarySensorEntity | undefined;
-  }
-
-  /**
    * Get the clock format select state
    * @returns The select entity state object or undefined if not found
    */
@@ -629,14 +623,6 @@ export class RemiCard extends LitElement {
    */
   private _getMusicModeState(): SelectEntity | undefined {
     return this._getState(this._entities.music_mode) as SelectEntity | undefined;
-  }
-
-  /**
-   * Get the volume control number state
-   * @returns The number entity state object or undefined if not found
-   */
-  private _getVolumeControlState(): SensorEntity | undefined {
-    return this._getState(this._entities.volume_control) as SensorEntity | undefined;
   }
 
   /**
@@ -1006,6 +992,31 @@ export class RemiCard extends LitElement {
   }
 
   /**
+   * Render a single connectivity item.
+   * @param entityId - The entity ID
+   * @param translationKey - The translation key for the value
+   * @param icon - The HA icon to display
+   * @param lang - The language code
+   * @returns Template result for the connectivity item
+   */
+  private _renderConnectivityItem(
+    entityId: string | null | undefined,
+    translationKey: string,
+    icon: string,
+    lang: string,
+  ): TemplateResult | typeof nothing {
+    const state = this._getState(entityId);
+    if (!state || state.state === 'unavailable') return nothing;
+
+    return html`
+      <div class="connectivity-item">
+        <ha-icon icon=${icon}></ha-icon>
+        <span>${localize(translationKey, lang)}: ${state.state}</span>
+      </div>
+    `;
+  }
+
+  /**
    * Render the connectivity status section
    * Shows WiFi connection status and signal strength
    * @returns Template result for the connectivity section
@@ -1032,30 +1043,80 @@ export class RemiCard extends LitElement {
     const isConnected = connectivityState.state === 'on';
     const lang = getLanguage(this.hass);
 
+    // Build connectivity items from config
+    const connectivityItems = [
+      {
+        entityId: this._entities.rssi,
+        translationKey: 'rssi',
+        icon: 'mdi:wifi-strength-3',
+        lang,
+      },
+      {
+        entityId: this._entities.firmware_version,
+        translationKey: 'firmware.version',
+        icon: 'mdi:chip',
+        lang,
+      },
+    ];
+
+    // Filter out items where state is unavailable
+    const activeItems = connectivityItems.filter(
+      (item) => item.entityId && this._getState(item.entityId)?.state !== 'unavailable',
+    );
+
     return html`
       <div class="section">
         <div class="connectivity">
           <div class="connectivity-item ${isConnected ? 'connected' : 'disconnected'}">
             <ha-icon icon="mdi:wifi"></ha-icon>
-            <span>${localize(`connectivity.${isConnected ? 'connected' : 'disconnected'}`, lang)}</span>
+            <span>${localize(
+              `connectivity.${isConnected ? 'connected' : 'disconnected'}`,
+              lang,
+            )}</span>
           </div>
-          ${rssiState && rssiState.state !== 'unavailable'
-            ? html`
-                <div class="connectivity-item">
-                  <ha-icon icon="mdi:wifi-strength-3"></ha-icon>
-                  <span>${rssiState.state} dBm</span>
-                </div>
-              `
-            : ''}
-          ${firmwareState && firmwareState.state !== 'unavailable'
-            ? html`
-                <div class="connectivity-item">
-                  <ha-icon icon="mdi:chip"></ha-icon>
-                  <span>${localize('firmware.version', lang)}: ${firmwareState.state}</span>
-                </div>
-              `
-            : ''}
+          ${activeItems.map(
+            (item) => this._renderConnectivityItem(
+              item.entityId!,
+              item.translationKey,
+              item.icon,
+              item.lang,
+            ),
+          )}
         </div>
+      </div>
+    `;
+  }
+
+  /**
+ * Render config for a device info connectivity item.
+ */
+/**
+ * Render a single device info connectivity item.
+   * @param item - The item configuration
+   * @param lang - The language code
+   * @returns Template result for the connectivity item
+   */
+  private _renderDeviceInfoItem(
+    item: DeviceInfoItem,
+    lang: string,
+  ): TemplateResult | typeof nothing {
+    const state = this._getState(item.entityId);
+    if (!state || state.state === 'unavailable') return nothing;
+
+    if (item.isBinary) {
+      return html`
+        <div class="connectivity-item ${isOn(state) ? 'connected' : 'disconnected'}">
+          <ha-icon icon="${isOn(state) ? item.icon : 'mdi:lan-disconnect'}"></ha-icon>
+          <span>${localizeCommon(isOn(state) ? 'on' : 'off', lang)}</span>
+        </div>
+      `;
+    }
+
+    const value = formatNumber(stateNumber(state), item.labelKey ? 0 : undefined, lang);
+    return html`
+      <div class="connectivity-item">
+        <ha-icon icon=${item.icon}></ha-icon>
+        <span>${value}</span>
       </div>
     `;
   }
@@ -1067,66 +1128,60 @@ export class RemiCard extends LitElement {
    * @returns Template result for the device info section
    */
   private _renderDeviceInfo(): TemplateResult {
-    const ipState = this._getIpAddressState();
-    const aliveState = this._getAliveState();
-    const fwUpdateState = this._getFirmwareUpdateState();
-    const volumeState = this._getVolumeControlState();
-    const noiseState = this._getNoiseThresholdState();
-    const nightFaceState = this._getNightFaceLevelState();
     const lang = getLanguage(this.hass);
 
-    const tiles: Array<TemplateResult> = [];
+    // Define all possible device info items
+    const deviceInfoItems: DeviceInfoItem[] = [
+      {
+        entityId: this._entities.ip_address,
+        translationKey: undefined,
+        icon: 'mdi:ip-network',
+        labelKey: undefined,
+        isBinary: false,
+      },
+      {
+        entityId: this._entities.alive,
+        translationKey: undefined,
+        icon: undefined,
+        labelKey: undefined,
+        isBinary: true,
+      },
+      {
+        entityId: this._entities.firmware_update,
+        translationKey: undefined,
+        icon: undefined,
+        labelKey: undefined,
+        isBinary: true,
+      },
+      {
+        entityId: this._entities.volume_control,
+        translationKey: undefined,
+        icon: 'mdi:volume-high',
+        labelKey: undefined,
+        isBinary: false,
+      },
+      {
+        entityId: this._entities.noise_threshold,
+        translationKey: undefined,
+        icon: 'mdi:bell',
+        labelKey: undefined,
+        isBinary: false,
+      },
+      {
+        entityId: this._entities.night_face_level,
+        translationKey: undefined,
+        icon: 'mdi:brightness-6',
+        labelKey: undefined,
+        isBinary: false,
+      },
+    ];
 
-    if (isAvailable(ipState)) {
-      tiles.push(html`
-        <div class="connectivity-item">
-          <ha-icon icon="mdi:ip-network"></ha-icon>
-          <span>${ipState!.state}</span>
-        </div>
-      `);
-    }
-    if (isAvailable(aliveState)) {
-      tiles.push(html`
-        <div class="connectivity-item ${isOn(aliveState) ? 'connected' : 'disconnected'}">
-          <ha-icon icon="${isOn(aliveState) ? 'mdi:lan-connect' : 'mdi:lan-disconnect'}"></ha-icon>
-          <span>${localizeCommon(isOn(aliveState) ? 'on' : 'off', lang)}</span>
-        </div>
-      `);
-    }
-    if (isAvailable(fwUpdateState)) {
-      tiles.push(html`
-        <div class="connectivity-item ${isOn(fwUpdateState) ? 'alarm' : 'connected'}">
-          <ha-icon icon="${isOn(fwUpdateState) ? 'mdi:alert' : 'mdi:check'}"></ha-icon>
-          <span>${localize(isOn(fwUpdateState) ? 'firmware.update_available' : 'firmware.up_to_date', lang)}</span>
-        </div>
-      `);
-    }
-    if (isAvailable(volumeState)) {
-      tiles.push(html`
-        <div class="connectivity-item">
-          <ha-icon icon="mdi:volume-high"></ha-icon>
-          <span>${formatNumber(stateNumber(volumeState), 0, lang)}%</span>
-        </div>
-      `);
-    }
-    if (isAvailable(noiseState)) {
-      tiles.push(html`
-        <div class="connectivity-item">
-          <ha-icon icon="mdi:bell"></ha-icon>
-          <span>${formatNumber(stateNumber(noiseState), 0, lang)}</span>
-        </div>
-      `);
-    }
-    if (isAvailable(nightFaceState)) {
-      tiles.push(html`
-        <div class="connectivity-item">
-          <ha-icon icon="mdi:brightness-6"></ha-icon>
-          <span>${formatNumber(stateNumber(nightFaceState), 0, lang)}%</span>
-        </div>
-      `);
-    }
+    // Filter items with available states
+    const activeItems = deviceInfoItems.filter(
+      (item) => item.entityId && this._getState(item.entityId)?.state !== 'unavailable',
+    );
 
-    if (tiles.length === 0) {
+    if (activeItems.length === 0) {
       return html``;
     }
 
@@ -1134,7 +1189,9 @@ export class RemiCard extends LitElement {
       <div class="section">
         <div class="section-title">${localize('device_info.title', lang)}</div>
         <div class="connectivity">
-          ${tiles}
+          ${activeItems.map(
+            (item) => this._renderDeviceInfoItem(item, lang),
+          )}
         </div>
       </div>
     `;

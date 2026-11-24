@@ -1,6 +1,6 @@
 /**
  * Entity discovery for the Rémi Card.
- *
+
  * Resolves each logical role to an entity id. Resolution order:
  *  1. explicit config override (e.g. `temperature: sensor.foo_temperature`)
  *  2. `translation_key` match on `hass.entities` (stable across renames)
@@ -66,7 +66,7 @@ export function slugify(name: string): string {
 }
 
 /** Extract the object_id portion of a device identifier.
- *
+
  * Accepts either a bare slug (`garance`) or a full entity_id
  * (`device_tracker.remi_garance`, `light.garance_night_light`) and returns the
  * part after the first dot. A value without a dot is returned unchanged.
@@ -113,6 +113,8 @@ function collectCandidates(hass: HomeAssistant, base?: string): string[] {
     return byPlatform;
   }
 
+  // Fall back to hass.states when entities aren't in the registry
+  // or don't have the urbanhello_remi platform tag
   return Object.keys(hass.states ?? {});
 }
 
@@ -123,15 +125,30 @@ export function discoverEntities(
 ): DiscoveredEntities {
   const result: DiscoveredEntities = {};
   const registry = hass.entities ?? {};
+  const states = hass.states ?? {};
   const base = configBase(config);
-  const candidates = collectCandidates(hass, base);
-  const candidateSet = new Set(candidates);
 
+  // Collect candidates from both entities registry and states
+  const candidatesFromRegistry = collectCandidates(hass, base);
+  const candidatesFromStates = Object.keys(states);
+  const allCandidates = [...new Set([...candidatesFromRegistry, ...candidatesFromStates])];
+  const candidateSet = new Set(allCandidates);
+
+  // Build translation key map from both registry and states
   const byTranslationKey = new Map<string, string>();
-  for (const id of candidates) {
+  // Check registry first
+  for (const id of candidatesFromRegistry) {
     const entry = registry[id];
     const key = entry?.translation_key;
     if (key) {
+      byTranslationKey.set(`${id.split('.')[0]}.${key}`, id);
+    }
+  }
+  // Then check states for any keys not found in registry
+  for (const id of candidatesFromStates) {
+    const entry = registry[id] ?? states[id];
+    const key = entry?.translation_key;
+    if (key && !byTranslationKey.has(`${id.split('.')[0]}.${key}`)) {
       byTranslationKey.set(`${id.split('.')[0]}.${key}`, id);
     }
   }
@@ -148,7 +165,7 @@ export function discoverEntities(
       continue;
     }
     const suffix = `.${base}_${spec.key}`;
-    const match = candidates.find(
+    const match = allCandidates.find(
       (id) => candidateSet.has(id) && id.endsWith(suffix),
     );
     if (match) {
