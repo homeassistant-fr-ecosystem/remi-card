@@ -6,16 +6,7 @@ import { getLanguage, t } from './i18n-helper';
 import { normalizeDeviceId } from './entities';
 import { RemiCardConfig, type SectionId } from './types';
 import { SECTION_IDS } from './remi-card';
-
-const SECTION_LABEL_KEYS: Record<SectionId, string> = {
-  face_selector: 'editor.section.face_selector',
-  light_controls: 'editor.section.light_controls',
-  alarms: 'editor.section.alarms',
-  device_settings: 'editor.section.device_settings',
-  device_info: 'editor.section.device_info',
-  temperature_graph: 'editor.section.temperature_graph',
-  connectivity: 'editor.section.connectivity',
-};
+import { SECTION_LABEL_KEYS } from './sections';
 
 interface AnchorOption {
   id: string;

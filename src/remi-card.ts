@@ -10,6 +10,7 @@ import { getFaceIcon, FACE_STATES, FACE_HA_TO_API, FACE_API_TO_HA } from './face
 import { localize, localizeFace, localizeCommon } from './localize';
 import { getLanguage, t } from './i18n-helper';
 import { RemiCardConfig, type SectionId } from './types';
+import { SECTION_TITLE_KEYS } from './sections';
 import {
   discoverEntities,
   discoverAlarms,
@@ -140,17 +141,6 @@ export const DEFAULT_EXPANDED_SECTIONS: readonly SectionId[] = [
   'temperature_graph',
   'connectivity',
 ];
-
-/** Section titles, used by the collapsible headers. */
-const SECTION_TITLE_KEYS: Record<SectionId, string> = {
-  face_selector: 'face_selector.title',
-  light_controls: 'light_controls.title',
-  alarms: 'alarm.title',
-  device_settings: 'settings.title',
-  device_info: 'device_info.title',
-  temperature_graph: 'temperature.title',
-  connectivity: 'connectivity.title',
-};
 
 /** Section summary shown in the header while collapsed. */
 interface SectionSummary {
@@ -401,17 +391,17 @@ export class RemiCard extends LitElement {
 
     switch (section) {
       case 'light_controls': {
-        const lightState = this._getLightState();
+        const lightState = this._getTypedState<LightEntity>(this._entities.night_light);
         if (!lightState) return null;
         const isOnLight = lightState.state === 'on';
         const brightness = lightState.attributes.brightness;
         if (isOnLight && brightness !== undefined) {
-          return { text: `${Math.round((brightness / 255) * 100)}%` };
+          return { text: `${this._brightnessToPercent(brightness)}%` };
         }
         return { text: localize(isOnLight ? 'common.on' : 'common.off', lang) };
       }
       case 'temperature_graph': {
-        const tempState = this._getTemperatureState();
+        const tempState = this._getTypedState<SensorEntity>(this._entities.temperature);
         if (!isAvailable(tempState)) return null;
         return {
           text: `${formatNumber(stateNumber(tempState), 1, lang)}°C`,
@@ -419,7 +409,7 @@ export class RemiCard extends LitElement {
         };
       }
       case 'connectivity': {
-        const connectivityState = this._getConnectivityState();
+        const connectivityState = this._getTypedState<BinarySensorEntity>(this._entities.connectivity);
         if (!connectivityState) return null;
         const isConnected = connectivityState.state === 'on';
         return {
@@ -566,62 +556,6 @@ export class RemiCard extends LitElement {
   }
 
   /**
-   * Get the night light state
-   * @returns The light entity state object or undefined if not found
-   */
-  private _getLightState(): LightEntity | undefined {
-    return this._getTypedState<LightEntity>(this._entities.night_light);
-  }
-
-  /**
-   * Get the temperature sensor state
-   * @returns The temperature entity state object or undefined if not found
-   */
-  private _getTemperatureState(): SensorEntity | undefined {
-    return this._getTypedState<SensorEntity>(this._entities.temperature);
-  }
-
-  /**
-   * Get the face selector state
-   * @returns The select entity state object or undefined if not found
-   */
-  private _getFaceSelectState(): SelectEntity | undefined {
-    return this._getTypedState<SelectEntity>(this._entities.face);
-  }
-
-  /**
-   * Get the connectivity state
-   * @returns The binary sensor entity state object or undefined if not found
-   */
-  private _getConnectivityState(): BinarySensorEntity | undefined {
-    return this._getTypedState<BinarySensorEntity>(this._entities.connectivity);
-  }
-
-  /**
-   * Get the ambient luminosity sensor state
-   * @returns The sensor entity state object or undefined if not found
-   */
-  private _getLuminosityState(): SensorEntity | undefined {
-    return this._getTypedState<SensorEntity>(this._entities.luminosity);
-  }
-
-  /**
-   * Get the clock format select state
-   * @returns The select entity state object or undefined if not found
-   */
-  private _getClockFormatState(): SelectEntity | undefined {
-    return this._getTypedState<SelectEntity>(this._entities.clock_format);
-  }
-
-  /**
-   * Get the music mode select state
-   * @returns The select entity state object or undefined if not found
-   */
-  private _getMusicModeState(): SelectEntity | undefined {
-    return this._getTypedState<SelectEntity>(this._entities.music_mode);
-  }
-
-  /**
    * Change the selected option of a select entity
    * @param entityId - The select entity ID
    * @param option - The option to select
@@ -749,9 +683,9 @@ export class RemiCard extends LitElement {
    */
   private _renderHeader(): TemplateResult {
     const faceStateHA = this._getFaceState(); // snake_case (e.g. 'sleepy_face') or null
-    const lightState = this._getLightState();
-    const tempState = this._getTemperatureState();
-    const luminosityState = this._getLuminosityState();
+    const lightState = this._getTypedState<LightEntity>(this._entities.night_light);
+    const tempState = this._getTypedState<SensorEntity>(this._entities.temperature);
+    const luminosityState = this._getTypedState<SensorEntity>(this._entities.luminosity);
     const lang = getLanguage(this.hass);
 
     // Convert HA snake_case face to API camelCase for localization only.
@@ -802,7 +736,7 @@ export class RemiCard extends LitElement {
    * @returns Template result for the light control section
    */
   private _renderLightControls(): TemplateResult {
-    const lightState = this._getLightState();
+    const lightState = this._getTypedState<LightEntity>(this._entities.night_light);
     const isOn = lightState?.state === 'on';
     const lang = getLanguage(this.hass);
     // Keep the brightness value even when light is off
@@ -842,7 +776,7 @@ export class RemiCard extends LitElement {
    * @returns Template result for the face selector section
    */
   private _renderFaceSelector(): TemplateResult {
-    const faceSelectEntity = this._getFaceSelectState();
+    const faceSelectEntity = this._getTypedState<SelectEntity>(this._entities.face);
     if (!faceSelectEntity) return html``;
 
     // The select entity state is snake_case (e.g. 'sleepy_face'), convert to
@@ -883,8 +817,8 @@ export class RemiCard extends LitElement {
    * @returns Template result for the device settings section
    */
   private _renderDeviceSettings(): TemplateResult {
-    const clockFormatState = this._getClockFormatState();
-    const musicModeState = this._getMusicModeState();
+    const clockFormatState = this._getTypedState<SelectEntity>(this._entities.clock_format);
+    const musicModeState = this._getTypedState<SelectEntity>(this._entities.music_mode);
     const lang = getLanguage(this.hass);
 
     if (!clockFormatState && !musicModeState) return html``;
@@ -1001,7 +935,7 @@ export class RemiCard extends LitElement {
    * @returns Template result for the connectivity section
    */
   private _renderConnectivity(): TemplateResult {
-    const connectivityState = this._getConnectivityState();
+    const connectivityState = this._getTypedState<BinarySensorEntity>(this._entities.connectivity);
 
     if (!connectivityState || connectivityState.state === 'unavailable') {
       const lang = getLanguage(this.hass);
@@ -1065,10 +999,7 @@ export class RemiCard extends LitElement {
   }
 
   /**
- * Render config for a device info connectivity item.
- */
-/**
- * Render a single device info connectivity item.
+   * Render a single device info connectivity item.
    * @param item - The item configuration
    * @param lang - The language code
    * @returns Template result for the connectivity item
