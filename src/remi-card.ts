@@ -541,6 +541,18 @@ export class RemiCard extends LitElement {
     return this.hass.states[entityId] as HassEntity | undefined;
   }
 
+  /** Convert a light brightness attribute (0-255) to a percentage (0-100). */
+  private _brightnessToPercent(brightness: number): number {
+    return Math.round((brightness / 255) * 100);
+  }
+
+  /** Get a typed entity state, casting to the expected entity type. */
+  private _getTypedState<T extends HassEntity>(
+    entityId: string | null | undefined,
+  ): T | undefined {
+    return this._getState(entityId) as T | undefined;
+  }
+
   /**
    * Get the current face state
    * The face is exposed by the integration via a select entity (snake_case),
@@ -548,7 +560,7 @@ export class RemiCard extends LitElement {
    * @returns The face state in snake_case (e.g. 'sleepy_face') or null if unavailable
    */
   private _getFaceState(): string | null {
-    const faceSelectEntity = this._getState(this._entities.face) as SelectEntity | undefined;
+    const faceSelectEntity = this._getTypedState<SelectEntity>(this._entities.face);
     if (!faceSelectEntity || faceSelectEntity.state === 'unavailable') return null;
     return faceSelectEntity.state;
   }
@@ -558,7 +570,7 @@ export class RemiCard extends LitElement {
    * @returns The light entity state object or undefined if not found
    */
   private _getLightState(): LightEntity | undefined {
-    return this._getState(this._entities.night_light) as LightEntity | undefined;
+    return this._getTypedState<LightEntity>(this._entities.night_light);
   }
 
   /**
@@ -566,7 +578,7 @@ export class RemiCard extends LitElement {
    * @returns The temperature entity state object or undefined if not found
    */
   private _getTemperatureState(): SensorEntity | undefined {
-    return this._getState(this._entities.temperature) as SensorEntity | undefined;
+    return this._getTypedState<SensorEntity>(this._entities.temperature);
   }
 
   /**
@@ -574,7 +586,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getFaceSelectState(): SelectEntity | undefined {
-    return this._getState(this._entities.face) as SelectEntity | undefined;
+    return this._getTypedState<SelectEntity>(this._entities.face);
   }
 
   /**
@@ -582,7 +594,7 @@ export class RemiCard extends LitElement {
    * @returns The binary sensor entity state object or undefined if not found
    */
   private _getConnectivityState(): BinarySensorEntity | undefined {
-    return this._getState(this._entities.connectivity) as BinarySensorEntity | undefined;
+    return this._getTypedState<BinarySensorEntity>(this._entities.connectivity);
   }
 
   /**
@@ -590,7 +602,7 @@ export class RemiCard extends LitElement {
    * @returns The sensor entity state object or undefined if not found
    */
   private _getLuminosityState(): SensorEntity | undefined {
-    return this._getState(this._entities.luminosity) as SensorEntity | undefined;
+    return this._getTypedState<SensorEntity>(this._entities.luminosity);
   }
 
   /**
@@ -598,7 +610,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getClockFormatState(): SelectEntity | undefined {
-    return this._getState(this._entities.clock_format) as SelectEntity | undefined;
+    return this._getTypedState<SelectEntity>(this._entities.clock_format);
   }
 
   /**
@@ -606,7 +618,7 @@ export class RemiCard extends LitElement {
    * @returns The select entity state object or undefined if not found
    */
   private _getMusicModeState(): SelectEntity | undefined {
-    return this._getState(this._entities.music_mode) as SelectEntity | undefined;
+    return this._getTypedState<SelectEntity>(this._entities.music_mode);
   }
 
   /**
@@ -763,8 +775,7 @@ export class RemiCard extends LitElement {
     if (lightState && isOn(lightState)) {
       const brightness = lightState.attributes.brightness;
       if (brightness !== undefined) {
-        const percent = Math.round((brightness / 255) * 100);
-        parts.push(`${percent}%`);
+        parts.push(`${this._brightnessToPercent(brightness)}%`);
       }
     } else {
       parts.push(localizeCommon('off', lang));
@@ -796,7 +807,7 @@ export class RemiCard extends LitElement {
     const lang = getLanguage(this.hass);
     // Keep the brightness value even when light is off
     const currentBrightness = lightState?.attributes.brightness
-      ? Math.round((lightState.attributes.brightness / 255) * 100)
+      ? this._brightnessToPercent(lightState.attributes.brightness)
       : 50; // Default to 50% if no brightness attribute exists
 
     return html`
