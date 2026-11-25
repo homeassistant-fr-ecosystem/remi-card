@@ -1,6 +1,15 @@
 # Rémi Card
 
+[![Marketplace](https://img.shields.io/badge/Marketplace-Custom-41BDF5.svg)](https://www.home-assistant.io/integrations/marketplace/)
+[![HACS Validation](https://github.com/homeassistant-fr-ecosystem/remi-card/actions/workflows/validate.yml/badge.svg)](https://github.com/homeassistant-fr-ecosystem/remi-card/actions/workflows/validate.yml)
+[![Release](https://img.shields.io/github/v/release/homeassistant-fr-ecosystem/remi-card)](https://github.com/homeassistant-fr-ecosystem/remi-card/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/homeassistant-fr-ecosystem/remi-card/blob/main/LICENSE)
+
 A custom Lovelace card for Home Assistant to display and control Rémi UrbanHello baby sleep trainer devices.
+
+## Preview
+
+![Rémi Card — light theme](screenshots/remi-card.light.png)
 
 ## Features
 
